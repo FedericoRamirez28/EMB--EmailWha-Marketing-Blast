@@ -10,7 +10,7 @@
     "build": "nest build",
     "lint": "eslint .",
     "prisma:generate": "prisma generate",
-    "prisma:migrate": "prisma migrate dev",
+    "prisma:migrate:deploy": "prisma migrate deploy",
     "seed:dev": "ts-node src/seed.ts",
     "test": "jest"
   },
