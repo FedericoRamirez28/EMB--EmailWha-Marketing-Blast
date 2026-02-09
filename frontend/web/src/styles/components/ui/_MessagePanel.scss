@@ -1,0 +1,82 @@
+.messagePanel {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.messagePanel__grid {
+  display: grid;
+  gap: 12px;
+}
+
+.messagePanel__html {
+  min-height: 220px;
+  resize: vertical;
+  font-family: var(--mono);
+}
+
+.messagePanel__attachments {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.messagePanel__attHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.messagePanel__attTitle {
+  margin: 0;
+  font-size: 14px;
+  color: var(--text-soft);
+}
+
+.messagePanel__attActions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.messagePanel__attList {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.messagePanel__attItem {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(255,255,255,0.12);
+  background: rgba(255,255,255,0.05);
+}
+
+.messagePanel__attLink {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+  text-decoration: none;
+
+  &:hover {
+    text-decoration: underline;
+  }
+}
+
+.messagePanel__attEmpty {
+  color: var(--muted);
+  padding: 6px 2px;
+}

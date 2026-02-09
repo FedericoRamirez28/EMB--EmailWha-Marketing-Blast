@@ -1,0 +1,110 @@
+/* Modales SMTP + Send (web) */
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.55);
+  backdrop-filter: blur(8px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 18px;
+  z-index: 9999;
+}
+
+.modal {
+  width: min(920px, 100%);
+  max-height: min(86vh, 760px);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.modal__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.modal__title {
+  margin: 0;
+  font-size: 18px;
+}
+
+.modal__content {
+  min-height: 0;
+  overflow: auto;
+  border-radius: var(--radius-md);
+  border: 1px solid rgba(255,255,255,0.12);
+  padding: 12px;
+  background: rgba(0,0,0,0.18);
+}
+
+.modal__footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  align-items: center;
+}
+
+/* forms */
+.form-2col {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+
+  .span-2 { grid-column: 1 / -1; }
+}
+
+.grid-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+
+  @media (max-width: 680px) {
+    grid-template-columns: 1fr;
+  }
+}
+
+.presets {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+/* checkbox inline */
+.field-inline {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.label-inline {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-soft);
+}
+
+/* progress */
+.progress {
+  height: 10px;
+  border-radius: 999px;
+  overflow: hidden;
+  border: 1px solid rgba(255,255,255,0.12);
+  background: rgba(255,255,255,0.06);
+}
+.progress__fill {
+  height: 100%;
+  width: 0%;
+  background: rgba(46, 168, 255, 0.65);
+  transition: width .25s ease;
+}
+
+/* responsive */
+@media (max-width: 680px) {
+  .form-2col {
+    grid-template-columns: 1fr;
+    .span-2 { grid-column: auto; }
+  }
+}

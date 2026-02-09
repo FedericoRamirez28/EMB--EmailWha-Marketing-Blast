@@ -1,0 +1,126 @@
+.rp__actionsTop {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.rp__addForm {
+  display: grid;
+  gap: 10px;
+  margin: 10px 0 14px 0;
+}
+
+.rp__addFormRow {
+  display: flex;
+  gap: 10px;
+
+  @media (max-width: 520px) {
+    flex-direction: column;
+  }
+}
+
+.rp__toolbar {
+  display: grid;
+  gap: 14px;
+  margin-bottom: 12px;
+}
+
+.rp__search {
+  max-width: 520px;
+}
+
+.rp__blocksChips {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.rp__bulkBtns {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.rp__tableWrap {
+  min-height: 0;
+  max-height: 440px;
+  overflow: auto;
+  border-radius: var(--radius-md);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.rp__meta {
+  margin: 10px 0 0 0;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.75);
+}
+
+/* Modal */
+.rp__modalOverlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(8px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 18px;
+  z-index: 9999;
+}
+
+.rp__modalCard {
+  width: min(860px, 100%);
+  max-height: min(80vh, 720px);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.rp__modalHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.rp__modalBody {
+  min-height: 0;
+  overflow: auto;
+  border-radius: var(--radius-md);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  padding: 12px;
+  background: rgba(0, 0, 0, 0.18);
+}
+
+.rp__modalGridHead {
+  display: grid;
+  grid-template-columns: 1fr 160px 140px;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.rp__modalList {
+  display: grid;
+  gap: 10px;
+}
+
+.rp__modalRow {
+  display: grid;
+  grid-template-columns: 1fr 160px 140px;
+  gap: 10px;
+  align-items: center;
+}
+
+.rp__modalFooter {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.rp__moveBar {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}

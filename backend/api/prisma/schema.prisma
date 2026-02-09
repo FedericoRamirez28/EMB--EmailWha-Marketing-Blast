@@ -1,0 +1,53 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  name         String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+model Block {
+  id        Int      @id // lo manejamos nosotros (1..N). El 0 es virtual ("Sin bloque")
+  name      String
+  capacity  Int
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Recipient {
+  id        Int      @id @default(autoincrement())
+  name      String   @default("")
+  email     String   @unique
+  tags      String   @default("")
+  blockId   Int      @default(0) // 0 = Sin bloque (virtual)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([blockId])
+  @@index([email])
+}
+
+model Attachment {
+  id           Int      @id @default(autoincrement())
+  originalName String
+  filename     String   @unique
+  mimeType     String
+  size         Int
+  createdAt    DateTime @default(now())
+}
+model Setting {
+  key   String @id
+  value String
+
+  @@map("settings")
+}
