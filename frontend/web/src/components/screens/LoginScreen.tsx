@@ -90,8 +90,6 @@ export function LoginScreen() {
         <button className="loginBtn" type="submit" disabled={!canSubmit || loading}>
           {loading ? 'Entrando…' : 'Entrar'}
         </button>
-
-        <div className="loginHint">Login con JWT contra el backend Nest.</div>
       </form>
     </div>
   )

@@ -15,24 +15,32 @@ export class BlocksService {
 
   async list() {
     const blocks = await this.prisma.block.findMany({ orderBy: { id: 'asc' } })
-    // agregamos el virtual "Sin bloque" id=0
-    return [
-      ...blocks,
-      { id: 0, name: 'Sin bloque', capacity: 999999 },
-    ]
+    return [...blocks, { id: 0, name: 'Sin bloque', capacity: 999999 }]
   }
 
-  async upsert(data: { id: number; name: string; capacity: number }) {
-    if (!Number.isInteger(data.id) || data.id <= 0) {
+  private async nextId(): Promise<number> {
+    const maxRow = await this.prisma.block.findFirst({
+      orderBy: { id: 'desc' },
+      select: { id: true },
+    })
+    return (maxRow?.id ?? 0) + 1
+  }
+
+  async createOrUpsert(data: { id?: number; name: string; capacity: number }) {
+    const hasId = typeof data.id === 'number' && Number.isInteger(data.id) && data.id > 0
+    const id = hasId ? (data.id as number) : await this.nextId()
+
+    if (!Number.isInteger(id) || id <= 0) {
       throw new BadRequestException('Block id inválido (debe ser > 0)')
     }
-    const name = String(data.name ?? '').trim() || `Bloque ${data.id}`
+
+    const name = String(data.name ?? '').trim() || `Bloque ${id}`
     const capacity = clampInt(data.capacity, 1, MAX_BLOCK_CAPACITY)
 
     return this.prisma.block.upsert({
-      where: { id: data.id },
+      where: { id },
       update: { name, capacity },
-      create: { id: data.id, name, capacity },
+      create: { id, name, capacity },
     })
   }
 
@@ -41,7 +49,6 @@ export class BlocksService {
     const existing = await this.prisma.block.findUnique({ where: { id } })
     if (!existing) throw new NotFoundException('Bloque no existe')
 
-    // mover recipients de ese bloque a "Sin bloque" (0)
     await this.prisma.recipient.updateMany({
       where: { blockId: id },
       data: { blockId: 0 },

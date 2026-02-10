@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, Put, UseGuards } from '@nestjs/common'
+import { Body, Controller, Delete, Get, Param, Post, Put, UseGuards } from '@nestjs/common'
 import { JwtGuard } from '@/auth/jwt.guard'
 import { BlocksService } from './blocks.service'
 import { UpsertBlockDto } from './dto/upsert-block.dto'
@@ -13,9 +13,16 @@ export class BlocksController {
     return this.blocks.list()
   }
 
+  /** ✅ Nuevo: crea bloque con ID automático si no viene id */
+  @Post()
+  create(@Body() dto: UpsertBlockDto) {
+    return this.blocks.createOrUpsert(dto)
+  }
+
+  /** ✅ Mantengo tu endpoint */
   @Put()
   upsert(@Body() dto: UpsertBlockDto) {
-    return this.blocks.upsert(dto)
+    return this.blocks.createOrUpsert(dto)
   }
 
   @Delete(':id')

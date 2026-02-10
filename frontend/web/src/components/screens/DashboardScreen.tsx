@@ -1,6 +1,5 @@
 // src/components/screens/DashboardScreen.tsx
 import React, { useMemo, useState } from 'react'
-import { useAuth } from '@/auth/useAuth'
 import RecipientsPanel from '@/components/ui/RecipientsPanel'
 import MessagePanel, { type ReadyPayload } from '@/components/ui/MessagePanel'
 import type { Recipient } from '@/lib/recipientsApi'
@@ -49,7 +48,6 @@ function toSendMessage(msg: ReadyPayload | null): SendMessage {
 }
 
 export function DashboardScreen() {
-  const { user } = useAuth()
 
   const [sel, setSel] = useState<Recipient[]>([])
   const [msg, setMsg] = useState<ReadyPayload | null>(null)
@@ -78,16 +76,6 @@ export function DashboardScreen() {
   return (
     <div style={{ padding: 18, display: 'grid', gap: 14 }}>
       <div>
-        <h2 style={{ margin: 0 }}>Dashboard</h2>
-
-        <p style={{ opacity: 0.85 }}>
-          Logueado como: <b>{user?.email ?? '—'}</b>
-        </p>
-
-        <p style={{ opacity: 0.75 }}>
-          Pantalla principal (web): desde acá vamos a ir migrando todos los paneles.
-        </p>
-
         <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginTop: 10 }}>
           <button className="btn" type="button" onClick={() => setSmtpOpen(true)}>
             Configurar SMTP

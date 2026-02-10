@@ -1,17 +1,15 @@
-import { IsNotEmpty, IsOptional, IsString } from 'class-validator';
+import { IsNotEmpty, IsOptional, IsString } from 'class-validator'
 
 export class SendTextDto {
-  /** Teléfono destino en formato internacional, ej: 54911XXXXXXXX */
   @IsString()
   @IsNotEmpty()
-  to!: string;
+  to!: string
 
   @IsString()
   @IsNotEmpty()
-  body!: string;
+  body!: string
 
-  /** Si querés: para track interno */
   @IsString()
   @IsOptional()
-  clientRef?: string;
+  clientRef?: string
 }

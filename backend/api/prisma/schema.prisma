@@ -7,7 +7,6 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-
 model User {
   id           String   @id @default(cuid())
   email        String   @unique
@@ -18,7 +17,7 @@ model User {
 }
 
 model Block {
-  id        Int      @id // lo manejamos nosotros (1..N). El 0 es virtual ("Sin bloque")
+  id        Int      @id
   name      String
   capacity  Int
   createdAt DateTime @default(now())
@@ -26,16 +25,23 @@ model Block {
 }
 
 model Recipient {
-  id        Int      @id @default(autoincrement())
-  name      String   @default("")
-  email     String   @unique
-  tags      String   @default("")
-  blockId   Int      @default(0) // 0 = Sin bloque (virtual)
+  id      Int     @id @default(autoincrement())
+  name    String  @default("")
+  email   String? @unique  // ✅ AHORA puede ser null
+  tags    String  @default("")
+  blockId Int     @default(0)
+
+  phone   String  @default("")
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  whatsappMessages      WhatsappMessage[]
+  whatsappCampaignItems WhatsappCampaignItem[]
+
   @@index([blockId])
   @@index([email])
+  @@index([phone])
 }
 
 model Attachment {
@@ -46,9 +52,156 @@ model Attachment {
   size         Int
   createdAt    DateTime @default(now())
 }
+
 model Setting {
   key   String @id
   value String
 
   @@map("settings")
+}
+
+/**
+ * =========================
+ * WhatsApp
+ * =========================
+ */
+
+enum WhatsappMessageStatus {
+  pending
+  sent
+  delivered
+  read
+  failed
+}
+
+model WhatsappMessage {
+  id   String @id @default(cuid())
+  to   String
+  body String
+
+  whapiMessageId String?               @unique
+  status         WhatsappMessageStatus @default(pending)
+  error          String?
+
+  recipientId Int?
+  recipient   Recipient? @relation(fields: [recipientId], references: [id], onDelete: SetNull)
+
+  clientRef String?
+
+  // ✅ HISTORIAL: muchos messages -> 1 item
+  campaignItemId String?
+  campaignItem   WhatsappCampaignItem? @relation("WaItemMessages", fields: [campaignItemId], references: [id], onDelete: SetNull)
+
+  // ✅ "LAST MESSAGE" (opuesto requerido por Prisma)
+  lastForItem WhatsappCampaignItem? @relation("WaItemLastMessage")
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  sentAt      DateTime?
+  deliveredAt DateTime?
+  readAt      DateTime?
+
+  @@index([status])
+  @@index([to])
+  @@index([createdAt])
+  @@index([campaignItemId])
+}
+
+model WhatsappWebhookLog {
+  id        String   @id @default(cuid())
+  event     String?
+  messageId String?
+  status    String?
+  payload   Json
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([messageId])
+}
+
+enum WhatsappCampaignStatus {
+  draft
+  running
+  paused
+  done
+  cancelled
+  failed
+}
+
+enum WhatsappCampaignItemStatus {
+  pending
+  sending
+  sent
+  delivered
+  read
+  failed
+  skipped
+}
+
+model WhatsappCampaign {
+  id     String                 @id @default(cuid())
+  name   String                 @default("Campaña WhatsApp")
+  status WhatsappCampaignStatus @default(draft)
+
+  blockId        Int?
+  tags           String?
+  requireAllTags Boolean @default(false)
+
+  body       String
+  delayMs    Int    @default(2500)
+  maxRetries Int    @default(2)
+
+  total          Int @default(0)
+  doneCount      Int @default(0)
+  sentCount      Int @default(0)
+  deliveredCount Int @default(0)
+  readCount      Int @default(0)
+  failedCount    Int @default(0)
+  skippedCount   Int @default(0)
+
+  startedAt  DateTime?
+  finishedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  items WhatsappCampaignItem[]
+
+  @@index([status])
+  @@index([createdAt])
+}
+
+model WhatsappCampaignItem {
+  id         String           @id @default(cuid())
+  campaignId String
+  campaign   WhatsappCampaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  recipientId Int?
+  recipient   Recipient? @relation(fields: [recipientId], references: [id], onDelete: SetNull)
+
+  to          String
+  name        String?
+  tagsSnap    String?
+  blockIdSnap Int?
+
+  status        WhatsappCampaignItemStatus @default(pending)
+  attempts      Int                        @default(0)
+  lastError     String?
+  lastAttemptAt DateTime?
+  nextAttemptAt DateTime?
+
+  // ✅ LAST MESSAGE: 1-1 (messageId unique) + backref en WhatsappMessage.lastForItem
+  messageId String?          @unique
+  message   WhatsappMessage? @relation("WaItemLastMessage", fields: [messageId], references: [id], onDelete: SetNull)
+
+  // ✅ HISTORIAL: 1 item -> N messages (backref: WhatsappMessage.campaignItem)
+  messages WhatsappMessage[] @relation("WaItemMessages")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([campaignId])
+  @@index([status])
+  @@index([to])
+  @@index([nextAttemptAt])
 }

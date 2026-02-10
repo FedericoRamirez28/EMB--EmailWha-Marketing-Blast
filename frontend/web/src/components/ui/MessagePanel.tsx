@@ -157,9 +157,6 @@ export default function MessagePanel({ onReady }: { onReady: (payload: ReadyPayl
             value={html}
             onChange={(e) => setHtml(e.target.value)}
           />
-          <p className="help">
-            Podés usar <code>{'{{nombre}}'}</code> y <code>{'{{email}}'}</code>.
-          </p>
         </div>
       </div>
 

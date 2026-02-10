@@ -1,30 +1,31 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable } from '@nestjs/common'
 
-type WhapiSendTextResponse = {
-  id?: string; // suele venir un message id
-  message?: any;
-  [k: string]: any;
-};
+export type WhapiSendTextResponse = {
+  id?: string
+  message?: unknown
+  [k: string]: unknown
+}
 
 @Injectable()
 export class WhapiService {
-  private baseUrl = (process.env.WHAPI_BASE_URL || 'https://gate.whapi.cloud').replace(/\/+$/, '');
-  private token = process.env.WHAPI_TOKEN || '';
+  private baseUrl = (process.env.WHAPI_BASE_URL || 'https://gate.whapi.cloud').replace(/\/+$/, '')
+  private token = (process.env.WHAPI_TOKEN || '').replace(/^Bearer\s+/i, '')
+
+  isConfigured(): boolean {
+    return Boolean(this.token && this.baseUrl)
+  }
 
   private assertConfigured() {
-    if (!this.token) throw new Error('WHAPI_TOKEN no configurado');
+    if (!this.token) throw new Error('WHAPI_TOKEN no configurado')
   }
 
   private normPhone(raw: string) {
-    // muy simple: deja solo dígitos
-    const d = String(raw ?? '').replace(/[^\d]/g, '');
-    return d;
+    return String(raw ?? '').replace(/[^\d]/g, '')
   }
 
   async sendText(toRaw: string, body: string): Promise<WhapiSendTextResponse> {
-    this.assertConfigured();
-
-    const to = this.normPhone(toRaw);
+    this.assertConfigured()
+    const to = this.normPhone(toRaw)
 
     const res = await fetch(`${this.baseUrl}/messages/text`, {
       method: 'POST',
@@ -33,15 +34,16 @@ export class WhapiService {
         Authorization: `Bearer ${this.token}`,
       },
       body: JSON.stringify({ to, body }),
-    });
+    })
 
-    const data = (await res.json().catch(() => ({}))) as WhapiSendTextResponse;
+    const parsed: unknown = await res.json().catch(() => ({}))
+    const data = parsed && typeof parsed === 'object' ? (parsed as WhapiSendTextResponse) : ({} as WhapiSendTextResponse)
 
     if (!res.ok) {
-      const msg = (data as any)?.message || JSON.stringify(data);
-      throw new Error(`Whapi sendText failed: ${res.status} ${msg}`);
+      const msg = (data as any)?.message || JSON.stringify(data)
+      throw new Error(`Whapi sendText failed: ${res.status} ${msg}`)
     }
 
-    return data;
+    return data
   }
 }

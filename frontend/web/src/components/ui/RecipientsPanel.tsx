@@ -730,7 +730,7 @@ export default function RecipientsPanel({
         <div className="rp__moveBar">
           <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
             <span className="badge">
-              Seleccionados en este tab: <b style={{ marginLeft: 6 }}>{selectedInTab.length}</b>
+              Seleccionados en este bloque: <b style={{ marginLeft: 6 }}>{selectedInTab.length}</b>
             </span>
 
             <select
@@ -810,7 +810,7 @@ export default function RecipientsPanel({
       </div>
 
       <p className="rp__meta">
-        Total: {list.length} · Filtrados: {filteredAll.length} · En este tab: {tabItems.length} · Seleccionados totales:{' '}
+        Total: {list.length} · Filtrados: {filteredAll.length} · Seleccionados totales:{' '}
         {selectedIds.size}
       </p>
 
