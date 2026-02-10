@@ -1,5 +1,6 @@
-import { Injectable } from '@nestjs/common'
+import { Injectable, Logger } from '@nestjs/common'
 import {
+  Prisma,
   WhatsappCampaignItemStatus,
   WhatsappCampaignStatus,
   WhatsappMessageStatus,
@@ -32,14 +33,71 @@ function recipientHasTags(recipientTags: string, tags: string[], requireAll: boo
     .filter(Boolean)
 
   const needle = tags.map((t) => t.toLowerCase())
-
   if (requireAll) return needle.every((t) => hay.includes(t))
   return needle.some((t) => hay.includes(t))
 }
 
+/** Extrae status code desde el error de WhapiService (ej: "Whapi sendText failed: 429 ...") */
+function parseWhapiStatusCode(errMsg: string): number | null {
+  const m = String(errMsg || '').match(/sendText failed:\s*(\d{3})\b/i)
+  if (!m) return null
+  const n = Number(m[1])
+  return Number.isFinite(n) ? n : null
+}
+
+/** Errores transitorios: vale la pena retry */
+function isRetryableError(errMsg: string): boolean {
+  const msg = String(errMsg || '').toLowerCase()
+  const code = parseWhapiStatusCode(msg)
+
+  // 408 timeout, 429 rate limit, 5xx servidor
+  if (code === 408) return true
+  if (code === 429) return true
+  if (code && code >= 500) return true
+
+  // timeouts/red
+  if (msg.includes('timeout')) return true
+  if (msg.includes('fetch failed')) return true
+  if (msg.includes('econnreset')) return true
+  if (msg.includes('etimedout')) return true
+  if (msg.includes('socket hang up')) return true
+
+  return false
+}
+
+/** Errores “límite/cuota” donde conviene pausar campaña para no quemar intentos */
+function isHardLimitError(errMsg: string): boolean {
+  const msg = String(errMsg || '').toLowerCase()
+  const code = parseWhapiStatusCode(msg)
+
+  // en muchos providers: 402/403 por cuota/plan
+  if (code === 402) return true
+  if (code === 403 && (msg.includes('limit') || msg.includes('quota') || msg.includes('trial'))) return true
+
+  // textos típicos
+  if (msg.includes('exceed')) return true
+  if (msg.includes('limit')) return true
+  if (msg.includes('quota')) return true
+  if (msg.includes('payment')) return true
+
+  return false
+}
+
+/** Backoff simple con jitter (cap 10 min) */
+function computeNextAttempt(attempts: number, baseDelayMs: number): Date {
+  const base = Math.max(500, Math.min(60_000, Math.trunc(baseDelayMs)))
+  const mult = Math.min(10, Math.max(1, attempts)) // 1..10
+  const jitter = Math.trunc(Math.random() * 500)
+  const ms = Math.min(10 * 60_000, base * mult + jitter)
+  return new Date(Date.now() + ms)
+}
+
+const INFLIGHT_TTL_MS = 2 * 60_000 // 2 min
+
 @Injectable()
 export class WhapiCampaignService {
   private running = false
+  private readonly log = new Logger(WhapiCampaignService.name)
 
   constructor(
     private readonly prisma: PrismaService,
@@ -206,6 +264,7 @@ export class WhapiCampaignService {
   private async kick() {
     if (this.running) return
     this.running = true
+
     try {
       while (true) {
         const camp = await this.prisma.whatsappCampaign.findFirst({
@@ -223,19 +282,32 @@ export class WhapiCampaignService {
         }
 
         const now = new Date()
-        const item = await this.prisma.whatsappCampaignItem.findFirst({
+
+        // 1) Buscar próximo item pendiente
+        const next = await this.prisma.whatsappCampaignItem.findFirst({
           where: {
             campaignId: camp.id,
             status: WhatsappCampaignItemStatus.pending,
             OR: [{ nextAttemptAt: null }, { nextAttemptAt: { lte: now } }],
           },
           orderBy: [{ nextAttemptAt: 'asc' }, { createdAt: 'asc' }],
+          select: {
+            id: true,
+            recipientId: true,
+            to: true,
+            attempts: true,
+          },
         })
 
-        if (!item) {
+        // Si no hay item, ver si terminó
+        if (!next) {
           const remaining = await this.prisma.whatsappCampaignItem.count({
-            where: { campaignId: camp.id, status: WhatsappCampaignItemStatus.pending },
+            where: {
+              campaignId: camp.id,
+              status: { in: [WhatsappCampaignItemStatus.pending, WhatsappCampaignItemStatus.sending] },
+            },
           })
+
           if (remaining === 0) {
             await this.prisma.whatsappCampaign.update({
               where: { id: camp.id },
@@ -247,25 +319,122 @@ export class WhapiCampaignService {
           continue
         }
 
-        await this.prisma.whatsappCampaignItem.update({
-          where: { id: item.id },
-          data: { status: WhatsappCampaignItemStatus.sending, lastAttemptAt: new Date() },
-        })
-
-        const msg = await this.prisma.whatsappMessage.create({
+        // 2) Claim seguro: si hay 2 instancias, solo una lo toma
+        const attemptsNow = next.attempts + 1
+        const claimed = await this.prisma.whatsappCampaignItem.updateMany({
+          where: { id: next.id, status: WhatsappCampaignItemStatus.pending },
           data: {
-            to: item.to,
-            body: camp.body,
-            status: WhatsappMessageStatus.pending,
-            recipientId: item.recipientId ?? null,
-            campaignItemId: item.id,
+            status: WhatsappCampaignItemStatus.sending,
+            lastAttemptAt: new Date(),
+            attempts: attemptsNow, // ✅ incrementa ANTES de enviar (estable en crash/restart)
+            nextAttemptAt: null,
           },
-          select: { id: true },
         })
+        if (claimed.count !== 1) continue
+
+        // 3) Crear mensaje con clientRef idempotente por intento
+        const clientRef = `camp:${camp.id}:${next.id}:${attemptsNow}`
+
+        let msg: { id: string; status: WhatsappMessageStatus; whapiMessageId: string | null; createdAt: Date } | null =
+          null
 
         try {
-          const r = await this.whapi.sendText(item.to, camp.body)
-          const whapiMessageId = typeof r?.id === 'string' ? r.id : ''
+          msg = await this.prisma.whatsappMessage.create({
+            data: {
+              to: next.to,
+              body: camp.body,
+              status: WhatsappMessageStatus.pending,
+              recipientId: next.recipientId ?? null,
+              campaignItemId: next.id,
+              clientRef,
+            },
+            select: { id: true, status: true, whapiMessageId: true, createdAt: true },
+          })
+        } catch (e: unknown) {
+          // Si clientRef es @unique y ya existe, lo traemos y NO duplicamos envío
+          if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
+            msg = await this.prisma.whatsappMessage.findFirst({
+              where: { clientRef },
+              select: { id: true, status: true, whapiMessageId: true, createdAt: true },
+            })
+          } else {
+            throw e
+          }
+        }
+
+        if (!msg) {
+          // imposible, pero por seguridad:
+          await this.prisma.whatsappCampaignItem.update({
+            where: { id: next.id },
+            data: {
+              status: WhatsappCampaignItemStatus.pending,
+              nextAttemptAt: computeNextAttempt(attemptsNow, camp.delayMs),
+              lastError: 'msg_create_failed',
+            },
+          })
+          await sleep(500)
+          continue
+        }
+
+        // 4) Si el msg ya estaba enviado por un intento anterior, NO re-enviar
+        const isAlreadySent =
+          msg.status === WhatsappMessageStatus.sent ||
+          msg.status === WhatsappMessageStatus.delivered ||
+          msg.status === WhatsappMessageStatus.read
+
+        if (isAlreadySent) {
+          await this.prisma.whatsappCampaignItem.update({
+            where: { id: next.id },
+            data: {
+              status: WhatsappCampaignItemStatus.sent,
+              lastError: null,
+              messageId: msg.id,
+              nextAttemptAt: null,
+            },
+          })
+
+          await this.prisma.whatsappCampaign.update({
+            where: { id: camp.id },
+            data: {
+              sentCount: { increment: 1 },
+              doneCount: { increment: 1 },
+            },
+          })
+
+          await sleep(Math.max(250, camp.delayMs))
+          continue
+        }
+
+        // 5) Si quedó “pending” viejo (crash/timeout), evitamos spam:
+        // - si es reciente, lo reprogramamos (no enviamos de nuevo)
+        // - si es muy viejo, lo marcamos failed y seguimos con retry normal
+        if (msg.status === WhatsappMessageStatus.pending) {
+          const age = Date.now() - new Date(msg.createdAt).getTime()
+          if (age < INFLIGHT_TTL_MS) {
+            await this.prisma.whatsappCampaignItem.update({
+              where: { id: next.id },
+              data: {
+                status: WhatsappCampaignItemStatus.pending,
+                nextAttemptAt: new Date(Date.now() + Math.max(1000, camp.delayMs)),
+                lastError: 'inflight_dedup_wait',
+                messageId: msg.id,
+              },
+            })
+            await sleep(500)
+            continue
+          } else {
+            // demasiado viejo, lo cerramos como failed para permitir retry con otro clientRef
+            await this.prisma.whatsappMessage.update({
+              where: { id: msg.id },
+              data: { status: WhatsappMessageStatus.failed, error: 'stale_pending_timeout' },
+            })
+          }
+        }
+
+        // 6) Enviar a Whapi 1 sola vez
+        try {
+          const r = await this.whapi.sendText(next.to, camp.body)
+          const whapiMessageId = typeof (r as any)?.id === 'string' ? String((r as any).id) : ''
 
           await this.prisma.whatsappMessage.update({
             where: { id: msg.id },
@@ -278,10 +447,9 @@ export class WhapiCampaignService {
           })
 
           await this.prisma.whatsappCampaignItem.update({
-            where: { id: item.id },
+            where: { id: next.id },
             data: {
               status: WhatsappCampaignItemStatus.sent,
-              attempts: { increment: 1 },
               lastError: null,
               messageId: msg.id,
               nextAttemptAt: null,
@@ -292,7 +460,7 @@ export class WhapiCampaignService {
             where: { id: camp.id },
             data: {
               sentCount: { increment: 1 },
-              doneCount: { increment: 1 }, // ✅ “done” se considera “intentado/enviado”
+              doneCount: { increment: 1 }, // “done” = procesado (enviado o fallido final)
             },
           })
         } catch (e: unknown) {
@@ -303,16 +471,37 @@ export class WhapiCampaignService {
             data: { status: WhatsappMessageStatus.failed, error },
           })
 
-          const attemptsNext = item.attempts + 1
-          const canRetry = attemptsNext <= camp.maxRetries
+          // Si es error de cuota/limit, pausamos campaña para no quemar intentos
+          if (isHardLimitError(error)) {
+            await this.prisma.whatsappCampaign.update({
+              where: { id: camp.id },
+              data: { status: WhatsappCampaignStatus.paused },
+            })
+
+            await this.prisma.whatsappCampaignItem.update({
+              where: { id: next.id },
+              data: {
+                status: WhatsappCampaignItemStatus.pending,
+                nextAttemptAt: new Date(Date.now() + 60_000), // reintenta más tarde
+                lastError: `paused_limit: ${error}`,
+                messageId: msg.id,
+              },
+            })
+
+            this.log.warn(`Campaign ${camp.id} pausada por límite/cuota: ${error}`)
+            await sleep(1000)
+            continue
+          }
+
+          const retryable = isRetryableError(error)
+          const canRetry = retryable && attemptsNow <= camp.maxRetries
 
           await this.prisma.whatsappCampaignItem.update({
-            where: { id: item.id },
+            where: { id: next.id },
             data: {
-              attempts: attemptsNext,
               lastError: error,
               status: canRetry ? WhatsappCampaignItemStatus.pending : WhatsappCampaignItemStatus.failed,
-              nextAttemptAt: canRetry ? new Date(Date.now() + Math.max(500, camp.delayMs)) : null,
+              nextAttemptAt: canRetry ? computeNextAttempt(attemptsNow, camp.delayMs) : null,
               messageId: msg.id,
             },
           })

@@ -1,7 +1,7 @@
 import { Body, Controller, Get, Param, Post, Query, UseGuards } from '@nestjs/common'
+import { Prisma, WhatsappCampaignItemStatus, WhatsappMessageStatus } from '@prisma/client'
 import { PrismaService } from '@/prisma/prisma.service'
 import { JwtGuard } from '@/auth/jwt.guard'
-import { WhatsappCampaignItemStatus, WhatsappMessageStatus } from '@prisma/client'
 import { WhapiService } from './whapi.service'
 import { SendTextDto } from './dto/send-text.dto'
 import { CreateCampaignDto } from './dto/campaign.dto'
@@ -9,6 +9,10 @@ import { WhapiCampaignService } from './whapi.campaign.service'
 
 function safeString(v: unknown): string {
   return typeof v === 'string' ? v : ''
+}
+
+function normPhone(raw: string) {
+  return String(raw ?? '').replace(/[^\d]/g, '')
 }
 
 function mapMsgStatus(status: string): WhatsappMessageStatus | null {
@@ -27,7 +31,6 @@ function mapItemStatus(ms: WhatsappMessageStatus): WhatsappCampaignItemStatus | 
   return null
 }
 
-@UseGuards(JwtGuard)
 @Controller('whapi')
 export class WhapiController {
   constructor(
@@ -36,6 +39,7 @@ export class WhapiController {
     private readonly campaigns: WhapiCampaignService,
   ) {}
 
+  @UseGuards(JwtGuard)
   @Get('health')
   health() {
     return {
@@ -45,24 +49,101 @@ export class WhapiController {
     }
   }
 
+  /**
+   * ✅ Para ver límites desde UI cuando quieras (manual refresh)
+   */
+  @UseGuards(JwtGuard)
+  @Get('limits')
+  async limits() {
+    try {
+      const data = await this.whapi.getLimits()
+      return { ok: true, data }
+    } catch (e: unknown) {
+      const error = e instanceof Error ? e.message : 'limits failed'
+      return { ok: false, error }
+    }
+  }
+
+  /**
+   * ✅ SEND idempotente por clientRef:
+   * - si llega el mismo clientRef otra vez => NO reenvía a Whapi
+   * - retorna el registro existente
+   */
+  @UseGuards(JwtGuard)
   @Post('send')
   async send(@Body() dto: SendTextDto) {
-    const msg = await this.prisma.whatsappMessage.create({
-      data: {
-        to: dto.to,
-        body: dto.body,
-        status: WhatsappMessageStatus.pending,
-        clientRef: dto.clientRef ?? null,
-      },
-      select: { id: true },
-    })
+    const to = normPhone(dto.to)
+    const body = String(dto.body ?? '')
+    const clientRef = dto.clientRef?.trim() ? dto.clientRef.trim() : null
+
+    // 1) Si viene clientRef: si ya existe, devolvemos SIN reenviar (anti-duplicados)
+    if (clientRef) {
+      const existing = await this.prisma.whatsappMessage.findFirst({
+        where: { clientRef },
+        select: { id: true, status: true, error: true, whapiMessageId: true },
+      })
+
+      if (existing) {
+        if (existing.status === WhatsappMessageStatus.failed) {
+          return {
+            ok: false,
+            id: existing.id,
+            status: 'failed',
+            error: existing.error ?? 'failed',
+            deduped: true,
+          }
+        }
+
+        const apiStatus = existing.status === WhatsappMessageStatus.pending ? 'pending' : 'sent'
+        return {
+          ok: true,
+          id: existing.id,
+          whapiMessageId: existing.whapiMessageId ?? null,
+          status: apiStatus,
+          deduped: true,
+        }
+      }
+    }
+
+    // 2) Crear registro (si hay unique en clientRef y hay carrera, atrapamos P2002 abajo)
+    let msgId: string
 
     try {
-      const r = await this.whapi.sendText(dto.to, dto.body)
+      const msg = await this.prisma.whatsappMessage.create({
+        data: {
+          to,
+          body,
+          status: WhatsappMessageStatus.pending,
+          clientRef,
+        },
+        select: { id: true },
+      })
+      msgId = msg.id
+    } catch (e: unknown) {
+      // ✅ Si agregaste @unique en clientRef y chocan 2 requests simultáneos, cae acá
+      if (clientRef && e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
+        const existing = await this.prisma.whatsappMessage.findFirst({
+          where: { clientRef },
+          select: { id: true, status: true, error: true, whapiMessageId: true },
+        })
+        if (existing) {
+          if (existing.status === WhatsappMessageStatus.failed) {
+            return { ok: false, id: existing.id, status: 'failed', error: existing.error ?? 'failed', deduped: true }
+          }
+          const apiStatus = existing.status === WhatsappMessageStatus.pending ? 'pending' : 'sent'
+          return { ok: true, id: existing.id, whapiMessageId: existing.whapiMessageId ?? null, status: apiStatus, deduped: true }
+        }
+      }
+      throw e
+    }
+
+    // 3) Enviar a Whapi 1 sola vez
+    try {
+      const r = await this.whapi.sendText(to, body)
       const whapiMessageId = safeString((r as any)?.id)
 
       await this.prisma.whatsappMessage.update({
-        where: { id: msg.id },
+        where: { id: msgId },
         data: {
           whapiMessageId: whapiMessageId || null,
           status: WhatsappMessageStatus.sent,
@@ -73,7 +154,7 @@ export class WhapiController {
 
       return {
         ok: true,
-        id: msg.id,
+        id: msgId,
         whapiMessageId: whapiMessageId || null,
         status: 'sent',
         data: r,
@@ -81,13 +162,14 @@ export class WhapiController {
     } catch (e: unknown) {
       const error = e instanceof Error ? e.message : 'send failed'
       await this.prisma.whatsappMessage.update({
-        where: { id: msg.id },
+        where: { id: msgId },
         data: { status: WhatsappMessageStatus.failed, error },
       })
-      return { ok: false, id: msg.id, status: 'failed', error }
+      return { ok: false, id: msgId, status: 'failed', error }
     }
   }
 
+  @UseGuards(JwtGuard)
   @Get('status/:id')
   async status(@Param('id') id: string) {
     const row = await this.prisma.whatsappMessage.findUnique({
@@ -108,16 +190,19 @@ export class WhapiController {
     return { ok: true, data: row }
   }
 
+  @UseGuards(JwtGuard)
   @Get('campaigns')
   async listCampaigns() {
     return this.campaigns.listCampaigns()
   }
 
+  @UseGuards(JwtGuard)
   @Get('campaign/:id')
   async getCampaign(@Param('id') id: string) {
     return this.campaigns.getCampaign(id)
   }
 
+  @UseGuards(JwtGuard)
   @Post('campaign')
   async createCampaign(@Body() dto: CreateCampaignDto) {
     const name = (dto.name ?? 'Campaña WhatsApp').trim()
@@ -132,16 +217,19 @@ export class WhapiController {
     })
   }
 
+  @UseGuards(JwtGuard)
   @Post('campaign/:id/resume')
   async resume(@Param('id') id: string) {
     return this.campaigns.resumeCampaign(id)
   }
 
+  @UseGuards(JwtGuard)
   @Post('campaign/:id/cancel')
   async cancel(@Param('id') id: string) {
     return this.campaigns.cancelCampaign(id)
   }
 
+  @UseGuards(JwtGuard)
   @Post('campaign/:id/retry-failed')
   async retryFailed(@Param('id') id: string) {
     return this.campaigns.retryFailed(id)
@@ -151,7 +239,6 @@ export class WhapiController {
    * ✅ Webhook SIN JWT (Whapi pega desde afuera)
    */
   @Post('webhook')
-  @UseGuards() // sin guard
   async webhook(@Query('secret') secret: string | undefined, @Body() payload: unknown) {
     const expected = process.env.WHAPI_WEBHOOK_SECRET || ''
     if (expected && secret !== expected) {
@@ -217,7 +304,6 @@ export class WhapiController {
 
       const prev = item.status
 
-      // orden de avance
       const order: WhatsappCampaignItemStatus[] = [
         WhatsappCampaignItemStatus.pending,
         WhatsappCampaignItemStatus.sending,
@@ -230,8 +316,6 @@ export class WhapiController {
 
       const idxPrev = order.indexOf(prev)
       const idxNext = order.indexOf(mappedItem)
-
-      // no retroceder; y no recontar si es igual
       if (idxNext <= idxPrev) return
 
       await tx.whatsappCampaignItem.update({

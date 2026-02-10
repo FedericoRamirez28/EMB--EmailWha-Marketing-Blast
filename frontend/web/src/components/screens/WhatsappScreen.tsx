@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { useAuth } from '@/auth/useAuth' // <- ajustá si tu path es distinto
 
 function getApiBase(): string {
@@ -62,6 +62,24 @@ function authHeaders(token?: string | null): Record<string, string> {
 }
 
 /* =========================
+   ✅ UX: visibilidad de pestaña
+   ========================= */
+function usePageVisible(): boolean {
+  const initial =
+    typeof document !== 'undefined' ? document.visibilityState === 'visible' : true
+  const [visible, setVisible] = useState<boolean>(initial)
+
+  useEffect(() => {
+    if (typeof document === 'undefined') return
+    const onVis = () => setVisible(document.visibilityState === 'visible')
+    document.addEventListener('visibilitychange', onVis)
+    return () => document.removeEventListener('visibilitychange', onVis)
+  }, [])
+
+  return visible
+}
+
+/* =========================
    Types UI
    ========================= */
 type UiStatus = 'idle' | 'sending' | 'sent' | 'delivered' | 'read' | 'failed'
@@ -99,7 +117,9 @@ type StatusRespOk = {
 type StatusRespErr = { ok: false; error: string }
 type StatusResp = StatusRespOk | StatusRespErr
 
-type HealthResp = { ok: true; configured: boolean; baseUrl: string } | { ok: false; error: string }
+type HealthResp =
+  | { ok: true; configured: boolean; baseUrl: string }
+  | { ok: false; error: string }
 
 type CampaignStatus = 'draft' | 'running' | 'paused' | 'done' | 'cancelled' | 'failed'
 
@@ -152,7 +172,9 @@ type TabKey = 'test' | 'campaigns' | 'metrics'
 
 type BlockCfg = { id: number; name: string; capacity: number }
 
-type ImportPhonesResp = { ok: true; inserted: number; updated: number; skipped: number } | { ok: false; error: string }
+type ImportPhonesResp =
+  | { ok: true; inserted: number; updated: number; skipped: number }
+  | { ok: false; error: string }
 
 /* =========================
    ✅ Parsers (unknown -> typed)
@@ -335,16 +357,66 @@ function parseImportCsv(text: string): Array<{ phone: string; name?: string }> {
 }
 
 /* =========================
+   Auto refresh config (localStorage)
+   ========================= */
+const LS_WA_AUTO = 'wa_auto_refresh_v1'
+const LS_WA_INTERVAL = 'wa_auto_refresh_interval_v1'
+
+function readLsBool(key: string, fallback: boolean): boolean {
+  try {
+    const v = localStorage.getItem(key)
+    if (v === '1') return true
+    if (v === '0') return false
+    return fallback
+  } catch {
+    return fallback
+  }
+}
+function writeLsBool(key: string, v: boolean) {
+  try {
+    localStorage.setItem(key, v ? '1' : '0')
+  } catch {
+    // ignore
+  }
+}
+function readLsInt(key: string, fallback: number): number {
+  try {
+    const v = Number(localStorage.getItem(key))
+    return Number.isFinite(v) && v > 0 ? Math.trunc(v) : fallback
+  } catch {
+    return fallback
+  }
+}
+function writeLsInt(key: string, v: number) {
+  try {
+    localStorage.setItem(key, String(Math.trunc(v)))
+  } catch {
+    // ignore
+  }
+}
+
+/* =========================
    Component
    ========================= */
 export function WhatsappScreen() {
   const apiBase = useMemo(() => getApiBase(), [])
   const { token } = useAuth()
+  const pageVisible = usePageVisible()
 
   const [configured, setConfigured] = useState<boolean>(false)
 
   // Tabs
   const [tab, setTab] = useState<TabKey>('campaigns')
+
+  // ===== Anti-polling: manual refresh + auto toggle =====
+  const [autoRefresh, setAutoRefresh] = useState<boolean>(() => readLsBool(LS_WA_AUTO, false)) // OFF por defecto
+  const [autoEveryMs, setAutoEveryMs] = useState<number>(() => clampInt(readLsInt(LS_WA_INTERVAL, 15000), 5000, 60000))
+  const [refreshKey, setRefreshKey] = useState<number>(0)
+  const [lastUpdated, setLastUpdated] = useState<string>('—')
+
+  function bumpRefresh(): void {
+    setRefreshKey((x) => x + 1)
+  }
 
   // ===== TEST =====
   const [to, setTo] = useState('')
@@ -370,7 +442,6 @@ export function WhatsappScreen() {
   const [campTags, setCampTags] = useState('')
   const [campRequireAll, setCampRequireAll] = useState(false)
 
-  // en vez de input libre, dejamos select con blocks (sigue soportando "vacío" = todos)
   const [campBlockId, setCampBlockId] = useState<string>('') // select
   const [campDelayMs, setCampDelayMs] = useState<number>(2500)
   const [campMaxRetries, setCampMaxRetries] = useState<number>(2)
@@ -380,7 +451,13 @@ export function WhatsappScreen() {
   const [campaignDetail, setCampaignDetail] = useState<CampaignDetail | null>(null)
   const [campMsg, setCampMsg] = useState<string>('')
 
-  // Health/config
+  // ===== Locks anti doble click (evita duplicados) =====
+  const lockSend = useRef(false)
+  const lockImport = useRef(false)
+  const lockCreate = useRef(false)
+  const lockAction = useRef(false)
+
+  // Health/config (liviano: 1 llamada al montar o cambiar token)
   useEffect(() => {
     let alive = true
 
@@ -403,8 +480,12 @@ export function WhatsappScreen() {
     }
   }, [apiBase, token])
 
-  // Blocks polling (para que aparezcan los bloques creados en "Destinatarios")
+  /* =========================
+     ✅ Blocks: solo tab campaigns (y autoRefresh opcional)
+     ========================= */
   useEffect(() => {
+    if (tab !== 'campaigns') return
+
     let alive = true
     let t: number | null = null
 
@@ -424,13 +505,14 @@ export function WhatsappScreen() {
         const parsed = parseBlocksResp(j)
         setBlocks(parsed)
         setBlocksMsg('')
+        setLastUpdated(new Date().toLocaleTimeString())
       } catch (e: unknown) {
         if (!alive) return
         setBlocks([])
         setBlocksMsg(errToMessage(e))
       } finally {
-        if (alive) {
-          t = window.setTimeout(() => void load(), 2500)
+        if (alive && autoRefresh && pageVisible) {
+          t = window.setTimeout(() => void load(), autoEveryMs)
         }
       }
     }
@@ -440,11 +522,18 @@ export function WhatsappScreen() {
       alive = false
       if (t) window.clearTimeout(t)
     }
-  }, [apiBase, token])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [apiBase, token, tab, autoRefresh, autoEveryMs, pageVisible, refreshKey])
 
-  // Polling estado (TEST)
+  /* =========================
+     ✅ Status TEST: solo tab test + internalId
+     - autoRefresh opcional
+     - stop en read/failed
+     ========================= */
   useEffect(() => {
+    if (tab !== 'test') return
     if (!internalId) return
+
     let alive = true
     let timer: number | null = null
 
@@ -456,7 +545,9 @@ export function WhatsappScreen() {
         if (!alive) return
 
         if (!s.ok) {
-          timer = window.setTimeout(() => void tick(), 2500)
+          if (alive && autoRefresh && pageVisible) {
+            timer = window.setTimeout(() => void tick(), autoEveryMs)
+          }
           return
         }
 
@@ -466,22 +557,30 @@ export function WhatsappScreen() {
         if (st === 'failed') {
           setUiStatus('failed')
           setOut(JSON.stringify({ ok: false, error: err ?? 'failed', status: st }, null, 2))
-          return
+          setLastUpdated(new Date().toLocaleTimeString())
+          return // stop
         }
 
         if (st === 'read') {
           setUiStatus('read')
-          return
+          setLastUpdated(new Date().toLocaleTimeString())
+          return // stop
         }
 
         if (st === 'delivered') setUiStatus('delivered')
         else if (st === 'sent') setUiStatus('sent')
         else setUiStatus('sending')
 
-        timer = window.setTimeout(() => void tick(), 2000)
+        setLastUpdated(new Date().toLocaleTimeString())
+
+        if (alive && autoRefresh && pageVisible) {
+          timer = window.setTimeout(() => void tick(), autoEveryMs)
+        }
       } catch {
         if (!alive) return
-        timer = window.setTimeout(() => void tick(), 3000)
+        if (autoRefresh && pageVisible) {
+          timer = window.setTimeout(() => void tick(), autoEveryMs)
+        }
       }
     }
 
@@ -490,10 +589,14 @@ export function WhatsappScreen() {
       alive = false
       if (timer) window.clearTimeout(timer)
     }
-  }, [apiBase, internalId, token])
+  }, [apiBase, internalId, token, tab, autoRefresh, autoEveryMs, pageVisible, refreshKey])
 
-  // List campaigns polling
+  /* =========================
+     ✅ List campaigns: solo tab campaigns/metrics + autoRefresh opcional
+     ========================= */
   useEffect(() => {
+    if (tab !== 'campaigns' && tab !== 'metrics') return
+
     let alive = true
     let t: number | null = null
 
@@ -503,12 +606,15 @@ export function WhatsappScreen() {
         const j: unknown = await r.json().catch(() => null)
         const resp = parseListCampaignsResp(j)
         if (!alive) return
-        if (resp.ok) setCampaigns(resp.data)
+        if (resp.ok) {
+          setCampaigns(resp.data)
+          setLastUpdated(new Date().toLocaleTimeString())
+        }
       } catch {
         // ignore
       } finally {
-        if (alive) {
-          t = window.setTimeout(() => void load(), 2500)
+        if (alive && autoRefresh && pageVisible) {
+          t = window.setTimeout(() => void load(), autoEveryMs)
         }
       }
     }
@@ -518,10 +624,15 @@ export function WhatsappScreen() {
       alive = false
       if (t) window.clearTimeout(t)
     }
-  }, [apiBase, token])
+  }, [apiBase, token, tab, autoRefresh, autoEveryMs, pageVisible, refreshKey])
 
-  // Campaign detail polling
+  /* =========================
+     ✅ Campaign detail: solo cuando hay selectedCampaignId
+     - autoRefresh opcional
+     - stop si status done/cancelled/failed
+     ========================= */
   useEffect(() => {
+    if (tab !== 'metrics') return
     if (!selectedCampaignId) return
 
     let alive = true
@@ -534,11 +645,18 @@ export function WhatsappScreen() {
         const resp = parseCampaignDetail(j)
         if (!alive) return
         setCampaignDetail(resp)
+        setLastUpdated(new Date().toLocaleTimeString())
+
+        const st: CampaignStatus | null = resp.ok ? resp.data.status : null
+        const finished = st === 'done' || st === 'cancelled' || st === 'failed'
+
+        if (alive && autoRefresh && pageVisible && !finished) {
+          t = window.setTimeout(() => void load(), autoEveryMs)
+        }
       } catch {
         // ignore
-      } finally {
-        if (alive) {
-          t = window.setTimeout(() => void load(), 2000)
+        if (alive && autoRefresh && pageVisible) {
+          t = window.setTimeout(() => void load(), autoEveryMs)
         }
       }
     }
@@ -548,9 +666,12 @@ export function WhatsappScreen() {
       alive = false
       if (t) window.clearTimeout(t)
     }
-  }, [apiBase, selectedCampaignId, token])
+  }, [apiBase, selectedCampaignId, token, tab, autoRefresh, autoEveryMs, pageVisible, refreshKey])
 
   async function sendTest(): Promise<void> {
+    if (lockSend.current) return
+    lockSend.current = true
+
     setOut('Enviando...')
     setUiStatus('sending')
     setInternalId(null)
@@ -574,13 +695,19 @@ export function WhatsappScreen() {
       setUiStatus('sent')
       setInternalId(resp.id)
       setOut(JSON.stringify(resp, null, 2))
+      setLastUpdated(new Date().toLocaleTimeString())
     } catch (e: unknown) {
       setUiStatus('failed')
       setOut(JSON.stringify({ ok: false, error: errToMessage(e) }, null, 2))
+    } finally {
+      lockSend.current = false
     }
   }
 
   async function importPhones(): Promise<void> {
+    if (lockImport.current) return
+    lockImport.current = true
+
     setImpOut('Importando...')
     try {
       if (!token) {
@@ -623,12 +750,18 @@ export function WhatsappScreen() {
       const resp = j as ImportPhonesResp
       setImpOut(JSON.stringify(resp, null, 2))
       setImpCsv('')
+      setLastUpdated(new Date().toLocaleTimeString())
     } catch (e: unknown) {
       setImpOut(errToMessage(e))
+    } finally {
+      lockImport.current = false
     }
   }
 
   async function createCampaign(): Promise<void> {
+    if (lockCreate.current) return
+    lockCreate.current = true
+
     setCampMsg('Creando campaña...')
     try {
       const blockIdNum = campBlockId.trim() ? Number(campBlockId.trim()) : NaN
@@ -657,17 +790,23 @@ export function WhatsappScreen() {
         setCampMsg('Campaña creada ✅')
         setSelectedCampaignId(resp.id)
         setTab('metrics')
+        setLastUpdated(new Date().toLocaleTimeString())
         return
       }
 
       setCampMsg(resp.ok ? 'OK' : resp.error)
     } catch (e: unknown) {
       setCampMsg(errToMessage(e))
+    } finally {
+      lockCreate.current = false
     }
   }
 
   async function campaignAction(path: string): Promise<void> {
     if (!selectedCampaignId) return
+    if (lockAction.current) return
+    lockAction.current = true
+
     try {
       setCampMsg('Procesando...')
       const r = await fetch(`${apiBase}/whapi/campaign/${selectedCampaignId}/${path}`, {
@@ -676,8 +815,12 @@ export function WhatsappScreen() {
       })
       const j: unknown = await r.json().catch(() => null)
       setCampMsg(isRecord(j) ? JSON.stringify(j, null, 2) : 'OK')
+      setLastUpdated(new Date().toLocaleTimeString())
+      bumpRefresh() // refresca métricas luego de acciones
     } catch (e: unknown) {
       setCampMsg(errToMessage(e))
+    } finally {
+      lockAction.current = false
     }
   }
 
@@ -691,10 +834,19 @@ export function WhatsappScreen() {
   const canImport = Boolean(configured && impBlockId && impCsv.trim() && token)
   const canCreate = Boolean(configured && campBody.trim())
 
-  // ✅ sin setState en effect: si no hay seleccion, simplemente no mostramos detail
   const effectiveDetail = selectedCampaignId ? campaignDetail : null
   const selected = effectiveDetail?.ok ? effectiveDetail.data : null
   const progress = selected ? percent(selected.doneCount, selected.total) : 0
+
+  function onToggleAuto(v: boolean) {
+    setAutoRefresh(v)
+    writeLsBool(LS_WA_AUTO, v)
+  }
+  function onChangeInterval(v: number) {
+    const ms = clampInt(v, 5000, 60000)
+    setAutoEveryMs(ms)
+    writeLsInt(LS_WA_INTERVAL, ms)
+  }
 
   return (
     <div className="waScreen">
@@ -707,11 +859,58 @@ export function WhatsappScreen() {
             {configured ? 'Whapi configurado' : 'Whapi no configurado'}
           </span>
           <span className="waPill waPill--muted">API: {apiBase || '—'}</span>
+
+          <span className={`waPill ${pageVisible ? 'waPill--muted' : 'waPill--warn'}`}>
+            {pageVisible ? 'Pestaña activa' : 'Pestaña en background (pausado)'}
+          </span>
+
+          <span className="waPill waPill--muted">Últ. update: {lastUpdated}</span>
+
           {blocksMsg ? <span className="waPill waPill--warn">{blocksMsg}</span> : null}
         </div>
 
+        {/* Controls anti-polling */}
+        <div className="waScreen__actions" style={{ justifyContent: 'flex-start', gap: 10 }}>
+          <button className="waBtn" type="button" onClick={() => bumpRefresh()}>
+            Actualizar
+          </button>
+
+          <div className="waCheck">
+            <input
+              id="waAuto"
+              type="checkbox"
+              checked={autoRefresh}
+              onChange={(e) => onToggleAuto(e.target.checked)}
+            />
+            <label htmlFor="waAuto">Auto-actualizar</label>
+          </div>
+
+          <select
+            className="waScreen__input"
+            style={{ width: 160 }}
+            value={String(autoEveryMs)}
+            onChange={(e) => onChangeInterval(Number(e.target.value))}
+            disabled={!autoRefresh}
+            title="Intervalo de auto-actualización"
+          >
+            <option value="5000">Cada 5s</option>
+            <option value="10000">Cada 10s</option>
+            <option value="15000">Cada 15s</option>
+            <option value="30000">Cada 30s</option>
+            <option value="60000">Cada 60s</option>
+          </select>
+
+          <div className="waScreen__note" style={{ margin: 0 }}>
+            Tip: dejá <b>Auto-actualizar</b> apagado en Trial para no gastar solicitudes.
+          </div>
+        </div>
+
         <div className="waTabs">
-          <button className={`waTab ${tab === 'test' ? 'waTab--active' : ''}`} onClick={() => setTab('test')} type="button">
+          <button
+            className={`waTab ${tab === 'test' ? 'waTab--active' : ''}`}
+            onClick={() => setTab('test')}
+            type="button"
+          >
             Prueba
           </button>
           <button
@@ -734,7 +933,7 @@ export function WhatsappScreen() {
       {tab === 'test' && (
         <>
           <div className="waScreen__card">
-            <div className="waRow">
+            <div className="waRow" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <span
                 className={[
                   'waPill',
@@ -754,6 +953,10 @@ export function WhatsappScreen() {
                 {uiStatus === 'read' && 'Leído'}
                 {uiStatus === 'failed' && 'Error'}
               </span>
+
+              <button className="waBtn" type="button" onClick={() => bumpRefresh()} disabled={!internalId}>
+                Actualizar estado
+              </button>
             </div>
 
             <label className="waScreen__field">
@@ -782,7 +985,12 @@ export function WhatsappScreen() {
             </label>
 
             <div className="waScreen__actions">
-              <button className="waScreen__primary" type="button" onClick={() => void sendTest()} disabled={!canSendTest}>
+              <button
+                className="waScreen__primary"
+                type="button"
+                onClick={() => void sendTest()}
+                disabled={!canSendTest}
+              >
                 Enviar prueba
               </button>
             </div>
@@ -845,6 +1053,9 @@ export function WhatsappScreen() {
             <button className="waScreen__primary" type="button" disabled={!canImport} onClick={() => void importPhones()}>
               Importar números al bloque
             </button>
+            <button className="waBtn" type="button" onClick={() => bumpRefresh()}>
+              Actualizar listados
+            </button>
           </div>
 
           <div className="waMiniLog">
@@ -888,7 +1099,12 @@ export function WhatsappScreen() {
                 placeholder="Ej: ventas,frio,medic"
               />
               <div className="waCheck">
-                <input id="requireAll" type="checkbox" checked={campRequireAll} onChange={(e) => setCampRequireAll(e.target.checked)} />
+                <input
+                  id="requireAll"
+                  type="checkbox"
+                  checked={campRequireAll}
+                  onChange={(e) => setCampRequireAll(e.target.checked)}
+                />
                 <label htmlFor="requireAll">Requerir TODOS los tags</label>
               </div>
             </label>
@@ -911,6 +1127,9 @@ export function WhatsappScreen() {
                 onChange={(e) => setCampMaxRetries(Number(e.target.value || 0))}
                 inputMode="numeric"
               />
+              <div className="waScreen__hint">
+                Tip: en Trial probá con <b>0</b> para no gastar mensajes en retries.
+              </div>
             </label>
 
             <label className="waScreen__field waGrid2__span2">
@@ -1004,6 +1223,9 @@ export function WhatsappScreen() {
                   </div>
                 </div>
                 <div className="waMetricsHead__actions">
+                  <button className="waBtn" type="button" onClick={() => bumpRefresh()}>
+                    Actualizar
+                  </button>
                   <button className="waBtn" type="button" onClick={() => void campaignAction('resume')}>
                     Reanudar
                   </button>

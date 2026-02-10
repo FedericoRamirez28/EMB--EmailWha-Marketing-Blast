@@ -80,7 +80,7 @@ export class WhapiRecipientsService {
           continue
         }
 
-        // ✅ Si tu schema/db todavía exige email NOT NULL, usamos un placeholder único por phone
+        // Si tu schema/db exige email NOT NULL, placeholder único por phone
         await tx.recipient.create({
           data: {
             phone: r.phone,
