@@ -1,7 +1,6 @@
-// whapi.campaign.service.ts
 import { Injectable, Logger } from '@nestjs/common'
-import { Prisma } from '@prisma/client'
 import {
+  Prisma,
   WhatsappCampaignItemStatus,
   WhatsappCampaignStatus,
   WhatsappMessageStatus,
@@ -28,20 +27,19 @@ function splitTags(csv?: string | null): string[] {
 
 function recipientHasTags(recipientTags: string, tags: string[], requireAll: boolean): boolean {
   if (!tags.length) return true
-  const hay = recipientTags
+  const hay = String(recipientTags || '')
     .split(',')
     .map((x) => x.trim().toLowerCase())
     .filter(Boolean)
 
   const needle = tags.map((t) => t.toLowerCase())
-  if (requireAll) return needle.every((t) => hay.includes(t))
-  return needle.some((t) => hay.includes(t))
+  return requireAll ? needle.every((t) => hay.includes(t)) : needle.some((t) => hay.includes(t))
 }
 
-function clampInt(n: number, min: number, max: number): number {
-  const x = Math.trunc(Number(n))
+function clampInt(n: number, min: number, max: number) {
+  const x = Number(n)
   if (!Number.isFinite(x)) return min
-  return Math.max(min, Math.min(max, x))
+  return Math.max(min, Math.min(max, Math.trunc(x)))
 }
 
 async function chunked<T>(arr: T[], size: number, fn: (chunk: T[]) => Promise<void>) {
@@ -63,8 +61,8 @@ export class WhapiCampaignService {
 
   /**
    * ✅ Crea campaña y la ejecuta.
-   * - NO hay reintentos automáticos.
-   * - Cada destinatario se procesa 1 vez (sent o failed).
+   * - NO hay reintentos automáticos
+   * - Cada destinatario se procesa 1 vez (sent o failed)
    */
   async createCampaignAndStart(input: {
     name: string
@@ -101,7 +99,7 @@ export class WhapiCampaignService {
         tags: input.tags?.trim() ? input.tags.trim() : null,
         requireAllTags: input.requireAllTags,
         delayMs,
-        maxRetries: 0, // compat DB
+        maxRetries: 0, // si existe la columna, la dejamos en 0
         total: chosen.length,
         startedAt,
       },
@@ -157,8 +155,7 @@ export class WhapiCampaignService {
    * ✅ Reenviar toda la campaña MANUALMENTE.
    * - Resetea items (excepto skipped)
    * - Resetea contadores
-   * - Desvincula mensajes viejos (campaignItemId = null)
-   *   para que webhooks tardíos no contaminen la nueva ejecución.
+   * - Desvincula mensajes viejos (campaignItemId = null) para que webhooks tardíos no contaminen
    */
   async resendAllCampaign(id: string) {
     const camp = await this.prisma.whatsappCampaign.findUnique({ where: { id } })
@@ -326,12 +323,15 @@ export class WhapiCampaignService {
         })
         if (claimed.count !== 1) continue
 
+        // ✅ clientRef único por ejecución (startedAt)
         const startedKey = camp.startedAt ? new Date(camp.startedAt).getTime() : Date.now()
         const clientRef = `camp:${camp.id}:${next.id}:${startedKey}`
 
+        // 1) Crear msg; si ya existía por dedup, lo leemos
         let msgWasExisting = false
-        let msg: { id: string; status: WhatsappMessageStatus; whapiMessageId: string | null; error: string | null } | null =
-          null
+        let msg:
+          | { id: string; status: WhatsappMessageStatus; whapiMessageId: string | null; error: string | null }
+          | null = null
 
         try {
           msg = await this.prisma.whatsappMessage.create({
@@ -352,7 +352,9 @@ export class WhapiCampaignService {
               where: { clientRef },
               select: { id: true, status: true, whapiMessageId: true, error: true },
             })
-          } else throw e
+          } else {
+            throw e
+          }
         }
 
         if (!msg) {
@@ -370,6 +372,7 @@ export class WhapiCampaignService {
           continue
         }
 
+        // 2) Si era existente y ya terminó, no reenviar
         if (msgWasExisting) {
           const alreadySent =
             msg.status === WhatsappMessageStatus.sent ||
@@ -379,9 +382,9 @@ export class WhapiCampaignService {
           if (alreadySent) {
             await this.prisma.$transaction(async (tx) => {
               const mappedItemStatus =
-                msg.status === WhatsappMessageStatus.read
+                msg!.status === WhatsappMessageStatus.read
                   ? WhatsappCampaignItemStatus.read
-                  : msg.status === WhatsappMessageStatus.delivered
+                  : msg!.status === WhatsappMessageStatus.delivered
                     ? WhatsappCampaignItemStatus.delivered
                     : WhatsappCampaignItemStatus.sent
 
@@ -406,6 +409,7 @@ export class WhapiCampaignService {
             continue
           }
 
+          // Si quedó “pendiente” de una corrida rara, lo cerramos como failed y marcamos item failed (sin retry)
           const reason =
             msg.status === WhatsappMessageStatus.failed ? msg.error || 'dedup_existing_failed' : 'dedup_inflight_unknown'
 
@@ -431,6 +435,7 @@ export class WhapiCampaignService {
           continue
         }
 
+        // 3) ✅ NUEVO MENSAJE: enviar inmediatamente (no inflight_dedup_wait)
         try {
           const r = await this.whapi.sendText(next.to, camp.body)
           const whapiMessageId = typeof (r as any)?.id === 'string' ? String((r as any).id) : ''
