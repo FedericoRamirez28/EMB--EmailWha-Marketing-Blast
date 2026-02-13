@@ -28,10 +28,4 @@ export class CreateCampaignDto {
   @Min(250)
   @IsOptional()
   delayMs?: number
-
-  @Type(() => Number)
-  @IsInt()
-  @Min(0)
-  @IsOptional()
-  maxRetries?: number
 }
