@@ -1,436 +1,266 @@
+/* Bridge para que WhatsAppScreen adopte UI Medic sin reescribir JSX */
+
 .waScreen {
-  max-width: 980px;
-  margin: 0 auto;
-  display: grid;
-  gap: 14px;
+  max-width: 1100px;
+  margin: 18px auto;
+  padding: 0 14px;
 }
 
 .waScreen__head {
-  display: grid;
-  gap: 8px;
+  background: var(--color-surface);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-soft);
+  padding: var(--space-lg);
+  margin-bottom: 16px;
 }
 
 .waScreen__title {
-  font-size: 20px;
-  font-weight: 900;
-  color: #fff;
+  font-size: 1.15rem;
+  font-weight: 700;
 }
 
 .waScreen__subtitle {
-  font-size: 13px;
-  color: rgba(255, 255, 255, 0.68);
+  margin-top: 4px;
+  color: var(--color-ink-soft);
+  font-size: 0.9rem;
 }
 
 .waScreen__meta {
+  margin-top: 12px;
   display: flex;
-  gap: 10px;
   flex-wrap: wrap;
-  align-items: center;
+  gap: 10px;
 }
 
+/* Pills */
 .waPill {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  padding: 7px 10px;
+  gap: 6px;
+  padding: 6px 10px;
   border-radius: 999px;
-  font-size: 12px;
-  font-weight: 900;
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  background: rgba(255, 255, 255, 0.08);
-  color: rgba(255, 255, 255, 0.9);
+  font-size: 0.8rem;
+  border: 1px solid var(--color-border);
+  background: #fff;
+  color: #334155;
+
+  &--ok {
+    border-color: rgba(5, 150, 105, 0.35);
+    background: rgba(5, 150, 105, 0.10);
+    color: #065f46;
+  }
+  &--warn {
+    border-color: rgba(245, 158, 11, 0.40);
+    background: rgba(245, 158, 11, 0.12);
+    color: #92400e;
+  }
+  &--muted {
+    opacity: 0.75;
+  }
+
+  &--sent {
+    border-color: rgba(0, 143, 107, 0.40);
+    background: rgba(0, 143, 107, 0.10);
+    color: #065f46;
+  }
+  &--delivered {
+    border-color: rgba(59, 130, 246, 0.35);
+    background: rgba(59, 130, 246, 0.10);
+    color: #1d4ed8;
+  }
+  &--read {
+    border-color: rgba(16, 185, 129, 0.35);
+    background: rgba(16, 185, 129, 0.10);
+    color: #047857;
+  }
+  &--failed {
+    border-color: rgba(225, 29, 72, 0.35);
+    background: rgba(225, 29, 72, 0.10);
+    color: #9f1239;
+  }
 }
 
-.waPill--ok {
-  background: rgba(46, 204, 113, 0.16);
-  border-color: rgba(46, 204, 113, 0.24);
-}
-
-.waPill--warn {
-  background: rgba(255, 193, 7, 0.16);
-  border-color: rgba(255, 193, 7, 0.24);
-}
-
-.waPill--muted {
-  opacity: 0.85;
-}
-
-.waPill--sent {
-  background: rgba(78, 161, 255, 0.16);
-  border-color: rgba(78, 161, 255, 0.24);
-}
-
-.waPill--delivered {
-  background: rgba(255, 193, 7, 0.16);
-  border-color: rgba(255, 193, 7, 0.24);
-}
-
-.waPill--read {
-  background: rgba(46, 204, 113, 0.16);
-  border-color: rgba(46, 204, 113, 0.24);
-}
-
-.waPill--failed {
-  background: rgba(231, 76, 60, 0.16);
-  border-color: rgba(231, 76, 60, 0.24);
-}
-
-/* Tabs */
 .waTabs {
-  display: inline-flex;
-  gap: 8px;
+  margin-top: 14px;
+  display: flex;
+  gap: 10px;
   flex-wrap: wrap;
 }
 
 .waTab {
-  appearance: none;
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  background: rgba(255, 255, 255, 0.08);
-  color: rgba(255, 255, 255, 0.92);
-  padding: 8px 12px;
-  border-radius: 999px;
-  font-weight: 900;
-  cursor: pointer;
+  @extend .btn;
+  @extend .btn--ghost;
+  padding: 7px 12px;
+  font-weight: 600;
 
-  &:hover {
-    background: rgba(255, 255, 255, 0.12);
+  &--active {
+    @extend .btn--outline;
+    background: var(--color-primary-soft);
   }
 }
 
-.waTab--active {
-  background: rgba(255, 255, 255, 0.16);
-  border-color: rgba(255, 255, 255, 0.22);
-}
-
+/* Card genérica de la screen */
 .waScreen__card {
-  border: 1px solid rgba(255, 255, 255, 0.10);
-  background: rgba(255, 255, 255, 0.04);
-  border-radius: 16px;
-  padding: 14px;
-  display: grid;
-  gap: 12px;
+  @extend .card;
 }
 
+.waSectionTitle {
+  font-weight: 700;
+  font-size: 1rem;
+  margin-bottom: 6px;
+}
+
+/* Fields */
 .waScreen__field {
-  display: grid;
+  display: flex;
+  flex-direction: column;
   gap: 6px;
 }
 
 .waScreen__label {
-  font-size: 12px;
-  color: rgba(255, 255, 255, 0.70);
-  font-weight: 700;
+  font-size: 0.82rem;
+  color: var(--color-ink-soft);
 }
 
-.waScreen__hint {
-  font-size: 12px;
-  color: rgba(255, 255, 255, 0.55);
+.waScreen__hint,
+.waScreen__note {
+  font-size: 0.8rem;
+  color: var(--color-ink-soft);
 }
 
-.waScreen__input,
+.waScreen__input {
+  @extend .input;
+}
+
 .waScreen__textarea {
-  width: 100%;
-  border-radius: 14px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  background: rgba(0, 0, 0, 0.30);
-  color: #fff;
-  padding: 10px 12px;
-  outline: none;
-
-  &:focus {
-    border-color: rgba(255, 255, 255, 0.22);
-    background: rgba(0, 0, 0, 0.36);
-  }
+  @extend .input;
+  min-height: 120px;
+  resize: vertical;
 }
 
-.waScreen__actions {
-  display: grid;
-  gap: 10px;
+/* Botones WA */
+.waBtn {
+  @extend .btn;
+  @extend .btn--outline;
 }
 
 .waScreen__primary {
-  appearance: none;
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  background: rgba(255, 255, 255, 0.10);
-  color: #fff;
-  padding: 10px 12px;
-  border-radius: 14px;
-  font-weight: 900;
-  cursor: pointer;
-
-  &:hover {
-    background: rgba(255, 255, 255, 0.14);
-  }
-
-  &:disabled {
-    opacity: 0.45;
-    cursor: not-allowed;
-  }
+  @extend .btn;
+  @extend .btn--primary;
 }
 
-.waScreen__note {
-  font-size: 12px;
-  color: rgba(255, 255, 255, 0.62);
+.waBtn--danger {
+  @extend .btn;
+  @extend .btn--danger;
 }
 
-.waScreen__log {
-  border: 1px solid rgba(255, 255, 255, 0.10);
-  background: rgba(255, 255, 255, 0.03);
-  border-radius: 16px;
-  padding: 14px;
-}
-
-.waScreen__logTitle {
-  font-size: 12px;
-  font-weight: 900;
-  color: rgba(255, 255, 255, 0.70);
-  margin-bottom: 10px;
-}
-
-.waScreen__pre {
-  margin: 0;
-  white-space: pre-wrap;
-  word-break: break-word;
-  font-size: 12px;
-  line-height: 1.45;
-  color: rgba(255, 255, 255, 0.86);
-  background: rgba(0, 0, 0, 0.35);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 14px;
-  padding: 12px;
-  overflow: auto;
-}
-
-/* Layout helpers */
-.waRow {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-
+/* Grid */
 .waGrid2 {
   display: grid;
+  gap: 14px;
   grid-template-columns: 1fr 1fr;
-  gap: 12px;
-}
 
-.waGrid2__span2 {
-  grid-column: 1 / -1;
-}
+  &__span2 {
+    grid-column: 1 / -1;
+  }
 
-@media (max-width: 860px) {
-  .waGrid2 {
+  @media (max-width: 900px) {
     grid-template-columns: 1fr;
   }
-  .waGrid2__span2 {
-    grid-column: auto;
-  }
 }
 
-/* checkbox */
-.waCheck {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 12px;
-  color: rgba(255, 255, 255, 0.72);
+/* Separadores y logs */
+.waHr {
+  height: 1px;
+  background: var(--color-border);
+  margin: 10px 0;
 }
 
-/* mini log */
+.waScreen__log,
 .waMiniLog {
-  border: 1px solid rgba(255, 255, 255, 0.10);
-  background: rgba(0, 0, 0, 0.22);
-  border-radius: 14px;
+  margin-top: 14px;
+  background: #0b1220;
+  border-radius: var(--radius-md);
   padding: 12px;
+  color: #cbd5e1;
+  border: 1px solid rgba(255, 255, 255, 0.08);
 }
 
+.waScreen__logTitle,
 .waMiniLog__title {
-  font-size: 12px;
-  font-weight: 900;
-  color: rgba(255, 255, 255, 0.70);
+  font-weight: 700;
   margin-bottom: 8px;
+  font-size: 0.85rem;
+  color: #e2e8f0;
 }
 
+.waScreen__pre,
 .waMiniLog__pre {
   margin: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
+  font-size: 0.82rem;
   white-space: pre-wrap;
-  word-break: break-word;
-  font-size: 12px;
-  line-height: 1.45;
-  color: rgba(255, 255, 255, 0.86);
 }
 
-/* Tables */
+/* Tabla */
 .waTableWrap {
   overflow: auto;
-  border-radius: 14px;
-  border: 1px solid rgba(255, 255, 255, 0.10);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border);
+  background: #fff;
 }
 
 .waTable {
   width: 100%;
   border-collapse: collapse;
-  min-width: 780px;
+  font-size: 0.9rem;
 
-  th, td {
+  th,
+  td {
     padding: 10px 12px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-    font-size: 12px;
-    color: rgba(255, 255, 255, 0.86);
+    border-bottom: 1px solid var(--color-border);
     text-align: left;
-    white-space: nowrap;
   }
 
-  th {
-    font-weight: 900;
-    color: rgba(255, 255, 255, 0.70);
-    background: rgba(255, 255, 255, 0.04);
+  thead th {
+    background: #eef3ff;
+    font-size: 0.85rem;
+    color: #334155;
   }
 
-  tr.isActive td {
-    background: rgba(255, 255, 255, 0.06);
+  tbody tr.isActive {
+    background: rgba(0, 143, 107, 0.08);
   }
 }
 
 .waTdErr {
-  max-width: 280px;
-  white-space: normal;
-  word-break: break-word;
-  color: rgba(255, 210, 210, 0.9);
+  color: #9f1239;
 }
 
-.waLinkBtn {
-  appearance: none;
-  border: 0;
-  background: transparent;
-  color: rgba(180, 220, 255, 0.95);
-  font-weight: 900;
-  cursor: pointer;
-
-  &:hover {
-    text-decoration: underline;
-  }
-}
-
-/* Metrics */
-.waMetricsHead {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
-  flex-wrap: wrap;
-}
-
-.waMetricsHead__title {
-  font-size: 16px;
-  font-weight: 900;
-  color: #fff;
-}
-
-.waMetricsHead__sub {
-  font-size: 12px;
-  color: rgba(255, 255, 255, 0.68);
-}
-
-.waMetricsHead__actions {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.waBtn {
-  appearance: none;
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  background: rgba(255, 255, 255, 0.10);
-  color: #fff;
-  padding: 9px 12px;
-  border-radius: 12px;
-  font-weight: 900;
-  cursor: pointer;
-
-  &:hover {
-    background: rgba(255, 255, 255, 0.14);
-  }
-}
-
-.waBtn--danger {
-  background: rgba(231, 76, 60, 0.16);
-  border-color: rgba(231, 76, 60, 0.24);
-
-  &:hover {
-    background: rgba(231, 76, 60, 0.22);
-  }
-}
-
+/* Progress */
 .waProgress {
-  display: grid;
-  gap: 8px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 12px 0;
 }
 
 .waProgress__bar {
-  width: 100%;
+  flex: 1;
   height: 10px;
+  background: rgba(148, 163, 184, 0.22);
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.10);
   overflow: hidden;
 }
 
 .waProgress__fill {
   height: 100%;
-  border-radius: 999px;
-  background: rgba(78, 161, 255, 0.55);
+  background: var(--color-primary);
 }
 
 .waProgress__txt {
-  font-size: 12px;
-  color: rgba(255, 255, 255, 0.72);
-  font-weight: 900;
-}
-
-.waCards {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 10px;
-}
-
-@media (max-width: 860px) {
-  .waCards {
-    grid-template-columns: repeat(2, 1fr);
-  }
-}
-
-.waCardKpi {
-  border: 1px solid rgba(255, 255, 255, 0.10);
-  background: rgba(255, 255, 255, 0.03);
-  border-radius: 14px;
-  padding: 12px;
-}
-
-.waCardKpi__k {
-  font-size: 12px;
-  color: rgba(255, 255, 255, 0.70);
-  font-weight: 900;
-}
-
-.waCardKpi__v {
-  margin-top: 6px;
-  font-size: 20px;
-  font-weight: 900;
-  color: #fff;
-}
-
-/* ✅ extras para secciones */
-.waSectionTitle {
-  font-size: 13px;
-  font-weight: 900;
-  color: rgba(255, 255, 255, 0.90);
-  margin-top: 2px;
-}
-
-.waHr {
-  height: 1px;
-  background: rgba(255, 255, 255, 0.10);
-  margin: 6px 0;
-  border-radius: 999px;
+  font-size: 0.85rem;
+  color: var(--color-ink-soft);
+  min-width: 64px;
+  text-align: right;
 }

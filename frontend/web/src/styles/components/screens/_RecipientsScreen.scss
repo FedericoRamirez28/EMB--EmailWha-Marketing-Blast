@@ -1,0 +1,37 @@
+/* Screen wrapper: CLAVE para que el panel pueda recortar y scrollear */
+.recipientsScreen {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+
+  /* si querés el mismo padding que tenías */
+  padding: 18px;
+  gap: 12px;
+}
+
+/* El panel ocupa todo el alto disponible */
+.recipientsScreen__panelWrap {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+}
+
+/* El RecipientsPanel (card rp) que ya es flex column */
+.recipientsScreen__panelWrap > .rp {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* Debug no rompe el layout */
+.recipientsScreen__debug {
+  flex: 0 0 auto;
+  max-height: 160px;
+  overflow: auto;
+  margin: 0;
+  opacity: 0.7;
+  background: rgba(255, 255, 255, 0.65);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: 10px;
+}

@@ -97,7 +97,6 @@ function safeJsonParse(raw: string): unknown {
   }
 }
 
-
 export default function RecipientsPanel({
   onSelectionChange,
 }: {
@@ -572,35 +571,37 @@ export default function RecipientsPanel({
     void confirmPaste()
   }
 
+  const insertHint =
+    insertBlockId === 0
+      ? { kind: 'current' as const, label: activeCfg.name }
+      : { kind: 'selected' as const, label: blocks.find((b) => b.id === insertBlockId)?.name ?? String(insertBlockId) }
+
   return (
-    <div className="card">
+    <div className="card card--stretch rp">
       <div className="panel-header">
         <h2 className="panel-title">Destinatarios</h2>
 
         <div className="rp__actionsTop">
-          <button className="btn" onClick={onClickImportFile}>
+          <button className="btn btn--outline" onClick={onClickImportFile} type="button">
             Importar TXT/CSV/JSON
           </button>
-          <button className="btn" onClick={onClickOpenPaste}>
+          <button className="btn btn--outline" onClick={onClickOpenPaste} type="button">
             Pegar lista
           </button>
-          <button className="btn" onClick={onClickToggleForm}>
+          <button className="btn btn--outline" onClick={onClickToggleForm} type="button">
             {showForm ? 'Cancelar' : 'Agregar destinatario'}
           </button>
-          <button className="btn" onClick={onClickOpenBlocks}>
+          <button className="btn btn--outline" onClick={onClickOpenBlocks} type="button">
             Configurar bloques
           </button>
         </div>
       </div>
 
-      <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', marginBottom: 12 }}>
-        <span className="label" style={{ margin: 0 }}>
-          Importar / Agregar en:
-        </span>
+      <div className="rp__insertRow">
+        <span className="label rp__insertLabel">Importar / Agregar en:</span>
 
         <select
-          className="input"
-          style={{ width: 260 }}
+          className="input rp__insertSelect"
           value={String(insertBlockId === 0 ? 0 : insertBlockId)}
           onChange={(e) => {
             const uiVal = Number(e.target.value)
@@ -614,14 +615,14 @@ export default function RecipientsPanel({
           ))}
         </select>
 
-        <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.7)' }}>
-          {insertBlockId === 0 ? (
+        <span className="rp__hint">
+          {insertHint.kind === 'current' ? (
             <>
-              Usa el bloque actual: <b>{activeCfg.name}</b>
+              Usará el bloque actual: <b>{insertHint.label}</b>
             </>
           ) : (
             <>
-              Seleccionado: <b>{blocks.find((b) => b.id === insertBlockId)?.name ?? insertBlockId}</b>
+              Seleccionado: <b>{insertHint.label}</b>
             </>
           )}
         </span>
@@ -639,7 +640,7 @@ export default function RecipientsPanel({
         }}
       />
 
-      <div className="rp__blocksChips" style={{ marginBottom: 12 }}>
+      <div className="rp__blocksChips">
         {blocks.map((b) => {
           const isActive = b.id === activeBlockId
           const count = countByBlock.get(b.id) ?? 0
@@ -648,7 +649,8 @@ export default function RecipientsPanel({
           return (
             <button
               key={b.id}
-              className={`btn ${isActive ? 'btn-primary' : ''}`}
+              className={`btn ${isActive ? 'btn--primary' : 'btn--ghost'}`}
+              type="button"
               onClick={() => {
                 setActiveBlockId(b.id)
                 setMoveTo('')
@@ -671,6 +673,7 @@ export default function RecipientsPanel({
             onChange={(e) => setName(e.target.value)}
           />
           <input className="input" placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} />
+
           <div className="rp__addFormRow">
             <input
               className="input"
@@ -678,12 +681,12 @@ export default function RecipientsPanel({
               value={tags}
               onChange={(e) => setTags(e.target.value)}
             />
-            <button className="btn btn-primary" onClick={onClickAddRecipient}>
+            <button className="btn btn--primary" onClick={onClickAddRecipient} type="button">
               Guardar
             </button>
           </div>
 
-          <p style={{ margin: 0, fontSize: 12, color: 'rgba(255,255,255,0.7)' }}>
+          <p className="rp__hint">
             Se agregará en:{' '}
             <b>
               {resolveInsertBlockId() === 0
@@ -695,7 +698,7 @@ export default function RecipientsPanel({
         </div>
       )}
 
-      <div className="rp__toolbar" style={{ marginBottom: 10 }}>
+      <div className="rp__toolbar">
         <div className="rp__search">
           <label className="label">Buscar</label>
           <input
@@ -707,35 +710,35 @@ export default function RecipientsPanel({
         </div>
 
         <div className="rp__bulkBtns">
-          <button className="btn" onClick={toggleAllCurrentTab}>
+          <button className="btn btn--outline" onClick={toggleAllCurrentTab} type="button">
             {tabItems.length > 0 && tabItems.every((r) => selectedIds.has(r.id))
               ? 'Deseleccionar todo'
               : 'Seleccionar todo'}
           </button>
 
-          <button className="btn" onClick={clearSelection}>
+          <button className="btn btn--outline" onClick={clearSelection} type="button">
             Limpiar selección
           </button>
 
           <button
-            className="btn btn-danger"
+            className="btn btn--danger"
             onClick={onClickRemoveSelected}
             disabled={!selectedInTab.length}
             title="Eliminar todos los destinatarios seleccionados en este bloque"
+            type="button"
           >
             Eliminar seleccionados
           </button>
         </div>
 
         <div className="rp__moveBar">
-          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+          <div className="rp__moveRow">
             <span className="badge">
-              Seleccionados en este bloque: <b style={{ marginLeft: 6 }}>{selectedInTab.length}</b>
+              Seleccionados en este bloque: <b className="rp__badgeNum">{selectedInTab.length}</b>
             </span>
 
             <select
-              className="input"
-              style={{ width: 260 }}
+              className="input rp__moveSelect"
               value={moveTo === '' ? '' : String(moveTo)}
               onChange={(e) => {
                 const v = e.target.value
@@ -750,12 +753,17 @@ export default function RecipientsPanel({
               ))}
             </select>
 
-            <button className="btn btn-primary" onClick={onClickMoveSelected} disabled={!selectedInTab.length || moveTo === ''}>
+            <button
+              className="btn btn--primary"
+              onClick={onClickMoveSelected}
+              disabled={!selectedInTab.length || moveTo === ''}
+              type="button"
+            >
               Mover
             </button>
           </div>
 
-          <p style={{ margin: '8px 0 0 0', fontSize: 12, color: 'rgba(255,255,255,0.7)' }}>
+          <p className="rp__hint">
             Tip: usá “Sin bloque” para encontrar los que quedaron afuera y moverlos al bloque correcto.
           </p>
         </div>
@@ -765,17 +773,17 @@ export default function RecipientsPanel({
         <table className="table">
           <thead>
             <tr>
-              <th style={{ width: 46 }}>✔</th>
+              <th className="rp__colCheck">✔</th>
               <th>Nombre</th>
               <th>Email</th>
-              <th style={{ width: 180 }}>Tags</th>
-              <th style={{ width: 130, textAlign: 'right' }}>Acciones</th>
+              <th className="rp__colTags">Tags</th>
+              <th className="rp__colActions">Acciones</th>
             </tr>
           </thead>
           <tbody>
             {tabItems.map((r) => (
               <tr key={r.id}>
-                <td>
+                <td className="rp__tdCheck">
                   <input type="checkbox" checked={selectedIds.has(r.id)} onChange={() => toggle(r.id)} />
                 </td>
                 <td>{r.name || '—'}</td>
@@ -783,9 +791,10 @@ export default function RecipientsPanel({
                 <td>
                   <span className="badge">{r.tags || '—'}</span>
                 </td>
-                <td style={{ textAlign: 'right' }}>
+                <td className="rp__tdActions">
                   <button
-                    className="btn btn-danger"
+                    className="btn btn--danger btn--sm"
+                    type="button"
                     onClick={() => {
                       void removeOne(r.id)
                     }}
@@ -798,7 +807,7 @@ export default function RecipientsPanel({
 
             {!tabItems.length && (
               <tr>
-                <td colSpan={5} style={{ padding: 14, color: 'rgba(255,255,255,0.7)' }}>
+                <td colSpan={5} className="rp__empty">
                   {list.length
                     ? 'No hay destinatarios en este bloque con el filtro actual.'
                     : 'No hay destinatarios. Usá “Importar” o “Agregar destinatario”.'}
@@ -810,8 +819,7 @@ export default function RecipientsPanel({
       </div>
 
       <p className="rp__meta">
-        Total: {list.length} · Filtrados: {filteredAll.length} · Seleccionados totales:{' '}
-        {selectedIds.size}
+        Total: {list.length} · Filtrados: {filteredAll.length} · Seleccionados totales: {selectedIds.size}
       </p>
 
       {blocksModalOpen && (
@@ -819,19 +827,17 @@ export default function RecipientsPanel({
           <div className="rp__modalCard card">
             <div className="rp__modalHeader">
               <div>
-                <h3 className="panel-title" style={{ marginBottom: 4 }}>
-                  Configurar bloques
-                </h3>
-                <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.7)' }}>
+                <h3 className="panel-title rp__modalTitle">Configurar bloques</h3>
+                <div className="rp__hint">
                   Definí nombre y capacidad por bloque (1–{MAX_BLOCK_CAPACITY}). “Sin bloque” es automático (id 0).
                 </div>
                 {pendingDeleteIds.size > 0 && (
-                  <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.7)', marginTop: 6 }}>
+                  <div className="rp__hint">
                     A eliminar al guardar: <b>{pendingDeleteIds.size}</b>
                   </div>
                 )}
               </div>
-              <button className="btn" onClick={closeBlocksModal}>
+              <button className="btn btn--outline" onClick={closeBlocksModal} type="button">
                 Cerrar
               </button>
             </div>
@@ -840,9 +846,7 @@ export default function RecipientsPanel({
               <div className="rp__modalGridHead">
                 <span className="label">Nombre</span>
                 <span className="label">Capacidad</span>
-                <span className="label" style={{ textAlign: 'right' }}>
-                  Acción
-                </span>
+                <span className="label rp__right">Acción</span>
               </div>
 
               <div className="rp__modalList">
@@ -864,29 +868,27 @@ export default function RecipientsPanel({
                         updateBlockDraft(b.id, { capacity: clampInt(Number(e.target.value), 1, MAX_BLOCK_CAPACITY) })
                       }
                     />
-                    <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-                      <button className="btn" type="button" onClick={() => deleteBlockDraft(b.id)}>
+                    <div className="rp__rowRight">
+                      <button className="btn btn--danger btn--sm" type="button" onClick={() => deleteBlockDraft(b.id)}>
                         Borrar
                       </button>
                     </div>
                   </div>
                 ))}
 
-                {!draftBlocks.length && (
-                  <div style={{ padding: 10, color: 'rgba(255,255,255,0.7)' }}>No hay bloques. Agregá al menos uno.</div>
-                )}
+                {!draftBlocks.length && <div className="rp__emptyBox">No hay bloques. Agregá al menos uno.</div>}
               </div>
             </div>
 
             <div className="rp__modalFooter">
-              <button className="btn" onClick={addBlockDraft}>
+              <button className="btn btn--outline" onClick={addBlockDraft} type="button">
                 Agregar bloque
               </button>
-              <div style={{ flex: 1 }} />
-              <button className="btn" onClick={closeBlocksModal}>
+              <div className="rp__spacer" />
+              <button className="btn btn--outline" onClick={closeBlocksModal} type="button">
                 Cancelar
               </button>
-              <button className="btn btn-primary" onClick={onClickSaveBlocks}>
+              <button className="btn btn--primary" onClick={onClickSaveBlocks} type="button">
                 Guardar
               </button>
             </div>
@@ -899,36 +901,31 @@ export default function RecipientsPanel({
           <div className="rp__modalCard card">
             <div className="rp__modalHeader">
               <div>
-                <h3 className="panel-title" style={{ marginBottom: 4 }}>
-                  Pegar lista
-                </h3>
-                <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.7)' }}>
-                  Pegá emails separados por líneas, coma, punto y coma o tabs.
-                </div>
+                <h3 className="panel-title rp__modalTitle">Pegar lista</h3>
+                <div className="rp__hint">Pegá emails separados por líneas, coma, punto y coma o tabs.</div>
               </div>
-              <button className="btn" onClick={closePaste}>
+              <button className="btn btn--outline" onClick={closePaste} type="button">
                 Cerrar
               </button>
             </div>
 
             <div className="rp__modalBody">
               <textarea
-                className="input"
-                style={{ minHeight: 220, width: '100%', resize: 'vertical' }}
-                placeholder="Ej:
+                className="input rp__textarea"
+                placeholder={`Ej:
 Juan Perez <juan@mail.com>
 ana@mail.com
-Nombre, correo@dom.com"
+Nombre, correo@dom.com`}
                 value={pasteText}
                 onChange={(e) => setPasteText(e.target.value)}
               />
             </div>
 
             <div className="rp__modalFooter">
-              <button className="btn" onClick={closePaste}>
+              <button className="btn btn--outline" onClick={closePaste} type="button">
                 Cancelar
               </button>
-              <button className="btn btn-primary" onClick={onClickConfirmPaste}>
+              <button className="btn btn--primary" onClick={onClickConfirmPaste} type="button">
                 Importar
               </button>
             </div>

@@ -1,20 +1,239 @@
-/* ===== Base / Reset ===== */
-@import './base/reset';
-@import './base/tokens';
-@import './base/typography';
-@import './base/components';
+/* ===== Tokens base (Medic UI) ===== */
+:root {
+  --color-bg: #e0e5f0;
+  --color-surface: #ffffff;
+  --color-primary: #008f6b;
+  --color-primary-soft: #e0f4ee;
+  --color-border: #dde2ee;
+  --color-ink: #1f2933;
+  --color-ink-soft: #6b7280;
 
+  --color-success: #059669;
+  --color-danger: #e11d48;
+  --color-warning: #f59e0b;
 
+  --radius-lg: 16px;
+  --radius-md: 10px;
 
+  --shadow-soft: 0 10px 30px rgba(15, 23, 42, 0.16);
 
-/* ===== Layout ===== */
+  --space: 16px;
+  --space-lg: 24px;
+
+  --transition-fast: 0.18s ease-out;
+
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+
+/* ===== Reset básico ===== */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: radial-gradient(circle at top, #d4e5dd 0, #e0e5f0 45%, #cbd5e1 100%);
+  background-color: var(--color-bg);
+  color: var(--color-ink);
+}
+
+/* ===== Componentes globales reutilizables ===== */
+
+.card {
+  background: var(--color-surface);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-soft);
+  padding: var(--space-lg);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  gap: var(--space);
+
+  &--stretch {
+    height: 100%;
+  }
+
+  &__header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: var(--space);
+
+    &--compact {
+      justify-content: flex-start;
+    }
+  }
+
+  &__title {
+    margin: 0;
+    font-size: 1.1rem;
+  }
+
+  &__subtitle {
+    margin: 4px 0 0;
+    font-size: 0.85rem;
+    color: var(--color-ink-soft);
+  }
+}
+
+/* Botones */
+.btn {
+  border-radius: 999px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  font-size: 0.85rem;
+  padding: 8px 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  transition:
+    transform var(--transition-fast),
+    box-shadow var(--transition-fast),
+    background var(--transition-fast),
+    color var(--transition-fast),
+    border-color var(--transition-fast);
+
+  &--primary {
+    background: var(--color-primary);
+    color: #fff;
+    box-shadow: 0 6px 16px rgba(0, 143, 107, 0.35);
+  }
+
+  &--outline {
+    background: transparent;
+    border-color: var(--color-primary);
+    color: var(--color-primary);
+  }
+
+  &--ghost {
+    background: transparent;
+    border-color: var(--color-border);
+    color: var(--color-ink-soft);
+  }
+
+  &--danger {
+    background: #ef4444;
+    color: #fff;
+    border-color: transparent;
+    box-shadow: 0 6px 16px rgba(239, 68, 68, 0.25);
+  }
+
+  &--sm {
+    padding: 4px 10px;
+    font-size: 0.8rem;
+  }
+
+  &:hover {
+    transform: translateY(-1px);
+  }
+
+  &:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+    transform: none;
+    box-shadow: none;
+  }
+}
+
+/* Inputs */
+.input,
+textarea.input,
+select.input {
+  width: 100%;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border);
+  padding: 8px 10px;
+  font-size: 0.9rem;
+  background: #fff;
+  color: var(--color-ink);
+  outline: none;
+
+  &:focus {
+    border-color: rgba(0, 143, 107, 0.55);
+    box-shadow: 0 0 0 4px rgba(0, 143, 107, 0.12);
+  }
+}
+
+.label {
+  font-size: 0.8rem;
+  color: var(--color-ink-soft);
+}
+
+/* Tablas */
+.table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 0.9rem;
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: #fff;
+
+  th,
+  td {
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--color-border);
+    text-align: left;
+  }
+
+  thead th {
+    background: #eef3ff;
+    font-size: 0.85rem;
+    color: #334155;
+    border-bottom: 1px solid var(--color-border);
+  }
+
+  tbody tr:last-child td {
+    border-bottom: none;
+  }
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.18);
+  color: #334155;
+  font-size: 0.8rem;
+}
+
+/* SweetAlert */
+.swal-popup {
+  border-radius: var(--radius-lg);
+  padding: 20px 22px;
+  background: #fff;
+  box-shadow: var(--shadow-soft);
+}
+.swal-title {
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: var(--color-ink);
+}
+.swal-text {
+  font-size: 0.95rem;
+  color: var(--color-ink-soft);
+  margin-top: 6px;
+}
+
+/* ===== IMPORTS (solo @import, no @use) ===== */
 @import './components/layout/AppShell';
-
-/* ===== Screens ===== */
+@import './components/screens/RecipientsScreen';
 @import './components/screens/LoginScreen';
-
 @import './components/ui/RecipientsPanel';
+
 @import './components/ui/MessagePanel';
-/* ===== UI ===== */
+
 @import './components/ui/mailModals';
 @import './components/screens/WhatsappScreen';

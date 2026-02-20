@@ -45,7 +45,10 @@ export function AppShell() {
       </header>
 
       <main className="appShell__main">
-        <Outlet />
+        {/* ✅ CLAVE: wrapper flex para que el Outlet tenga “alto real” */}
+        <div className="appShell__outlet">
+          <Outlet />
+        </div>
       </main>
     </div>
   )

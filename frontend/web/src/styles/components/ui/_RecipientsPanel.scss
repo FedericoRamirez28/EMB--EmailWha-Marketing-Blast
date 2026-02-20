@@ -1,67 +1,193 @@
+/* src/styles/components/ui/_RecipientsPanel.scss */
+/* RecipientsPanel – Medic UI + Full height + Scroll interno */
+
+.rp {
+  height: 100%;
+  min-height: 0; /* clave */
+  display: flex;
+  flex-direction: column;
+}
+
+/* Header */
+.panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space);
+  flex-wrap: wrap;
+}
+
+.panel-title {
+  margin: 0;
+  font-size: 1.1rem;
+}
+
+/* Acciones top */
 .rp__actionsTop {
   display: flex;
   gap: 10px;
   flex-wrap: wrap;
-  justify-content: flex-end;
 }
 
-.rp__addForm {
-  display: grid;
+/* Selector “importar/agregar en” */
+.rp__insertRow {
+  display: flex;
   gap: 10px;
-  margin: 10px 0 14px 0;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.rp__insertLabel {
+  margin: 0;
+}
+
+.rp__insertSelect {
+  width: 260px;
+}
+
+.rp__hint {
+  font-size: 12px;
+  color: var(--color-ink-soft);
+}
+
+/* Chips bloques */
+.rp__blocksChips {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+/* Add form */
+.rp__addForm {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 10px;
 }
 
 .rp__addFormRow {
   display: flex;
   gap: 10px;
+  align-items: center;
 
-  @media (max-width: 520px) {
+  @media (max-width: 900px) {
     flex-direction: column;
+    align-items: stretch;
   }
 }
 
+/* Toolbar */
 .rp__toolbar {
   display: grid;
-  gap: 14px;
-  margin-bottom: 12px;
+  grid-template-columns: 1fr auto;
+  gap: 12px;
+  margin-bottom: 10px;
+
+  @media (max-width: 1000px) {
+    grid-template-columns: 1fr;
+  }
 }
 
 .rp__search {
-  max-width: 520px;
-}
-
-.rp__blocksChips {
   display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
+  flex-direction: column;
+  gap: 6px;
 }
 
 .rp__bulkBtns {
   display: flex;
   gap: 10px;
   flex-wrap: wrap;
+  align-items: flex-end;
 }
 
+/* Move bar */
+.rp__moveBar {
+  margin-top: 8px;
+}
+
+.rp__moveRow {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.rp__moveSelect {
+  width: 260px;
+}
+
+.rp__badgeNum {
+  margin-left: 6px;
+}
+
+/* ===== Scroll interno (full height) =====
+   Todo lo de arriba NO crece, la tabla sí.
+*/
+.panel-header,
+.rp__insertRow,
+.rp__blocksChips,
+.rp__addForm,
+.rp__toolbar,
+.rp__meta {
+  flex: 0 0 auto;
+}
+
+/* Tabla/listado con scroll interno */
 .rp__tableWrap {
-  min-height: 0;
-  max-height: 440px;
+  flex: 1 1 auto;
+  min-height: 0; /* clave */
   overflow: auto;
+  overscroll-behavior: contain;
+
   border-radius: var(--radius-md);
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  border: 1px solid var(--color-border);
+  background: #fff;
+}
+
+/* sticky header */
+.rp__tableWrap .table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+
+/* columnas */
+.rp__colCheck {
+  width: 46px;
+}
+.rp__colTags {
+  width: 180px;
+}
+.rp__colActions {
+  width: 130px;
+  text-align: right;
+}
+.rp__tdActions {
+  text-align: right;
+}
+.rp__tdCheck {
+  vertical-align: middle;
+}
+
+.rp__empty {
+  padding: 14px;
+  color: var(--color-ink-soft);
 }
 
 .rp__meta {
   margin: 10px 0 0 0;
-  font-size: 12px;
-  color: rgba(255, 255, 255, 0.75);
+  font-size: 0.85rem;
+  color: var(--color-ink-soft);
 }
 
 /* Modal */
 .rp__modalOverlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.55);
-  backdrop-filter: blur(8px);
+  background: rgba(2, 6, 23, 0.55);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -71,56 +197,80 @@
 
 .rp__modalCard {
   width: min(860px, 100%);
-  max-height: min(80vh, 720px);
+  max-height: min(84vh, 760px);
+  overflow: auto;
+}
+
+.rp__modalHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.rp__modalTitle {
+  margin-bottom: 4px;
+}
+
+.rp__modalBody {
   display: flex;
   flex-direction: column;
   gap: 12px;
 }
 
-.rp__modalHeader {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.rp__modalBody {
-  min-height: 0;
-  overflow: auto;
-  border-radius: var(--radius-md);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  padding: 12px;
-  background: rgba(0, 0, 0, 0.18);
-}
-
 .rp__modalGridHead {
   display: grid;
-  grid-template-columns: 1fr 160px 140px;
+  grid-template-columns: 1fr 160px 120px;
   gap: 10px;
-  margin-bottom: 10px;
-}
 
-.rp__modalList {
-  display: grid;
-  gap: 10px;
+  @media (max-width: 850px) {
+    grid-template-columns: 1fr;
+  }
 }
 
 .rp__modalRow {
   display: grid;
-  grid-template-columns: 1fr 160px 140px;
+  grid-template-columns: 1fr 160px 120px;
   gap: 10px;
   align-items: center;
+
+  @media (max-width: 850px) {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
+}
+
+.rp__right {
+  text-align: right;
+}
+
+.rp__rowRight {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 .rp__modalFooter {
   display: flex;
   gap: 10px;
+  flex-wrap: wrap;
   align-items: center;
-  justify-content: flex-end;
+  margin-top: 8px;
 }
 
-.rp__moveBar {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
+.rp__spacer {
+  flex: 1;
+}
+
+.rp__emptyBox {
+  padding: 10px;
+  color: var(--color-ink-soft);
+}
+
+/* textarea en modal pegar */
+.rp__textarea {
+  min-height: 220px;
+  width: 100%;
+  resize: vertical;
 }

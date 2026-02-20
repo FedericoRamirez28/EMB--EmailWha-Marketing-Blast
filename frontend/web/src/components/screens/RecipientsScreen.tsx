@@ -6,9 +6,13 @@ export function RecipientsScreen() {
   const [sel, setSel] = useState<Recipient[]>([])
 
   return (
-    <div style={{ padding: 18 }}>
-      <RecipientsPanel onSelectionChange={setSel} />
-      <pre style={{ marginTop: 12, opacity: 0.7 }}>{JSON.stringify(sel, null, 2)}</pre>
+    <div className="recipientsScreen">
+      <div className="recipientsScreen__panelWrap">
+        <RecipientsPanel onSelectionChange={setSel} />
+      </div>
+
+      {/* Debug (no rompe alto): scrollea adentro si es grande */}
+      <pre className="recipientsScreen__debug">{JSON.stringify(sel, null, 2)}</pre>
     </div>
   )
 }
