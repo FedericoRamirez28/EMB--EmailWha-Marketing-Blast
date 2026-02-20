@@ -1,4 +1,6 @@
+// src/components/screens/WhatsappScreen.tsx
 import React, { useEffect, useMemo, useRef, useState } from 'react'
+import * as XLSX from 'xlsx'
 import { useAuth } from '@/auth/useAuth' // ajustá si tu path es distinto
 
 function getApiBase(): string {
@@ -6,12 +8,9 @@ function getApiBase(): string {
   return typeof v === 'string' ? v : ''
 }
 
-function normPhone(raw: string): string {
-  return String(raw ?? '').replace(/[^\d]/g, '').trim()
-}
-
 function errToMessage(e: unknown): string {
   if (e instanceof Error) return e.message
+  if (typeof e === 'object' && e !== null) return 'Error'
   return String(e)
 }
 
@@ -58,6 +57,180 @@ function authHeaders(token?: string | null): Record<string, string> {
 }
 
 /* =========================
+   Normalización (sin no-base-to-string)
+   ========================= */
+function safeStr(raw: unknown): string {
+  if (raw === null || raw === undefined) return ''
+  if (typeof raw === 'string') return raw
+  if (typeof raw === 'number' || typeof raw === 'boolean' || typeof raw === 'bigint') return String(raw)
+  return ''
+}
+
+function normName(raw: unknown): string {
+  return safeStr(raw).replace(/\s+/g, ' ').trim()
+}
+
+function onlyDigits(raw: unknown): string {
+  return safeStr(raw).replace(/[^\d]/g, '').trim()
+}
+
+/**
+ * Normaliza teléfonos AR:
+ * - 549... => ok
+ * - 54...  => agrega 9
+ * - 11XXXXXXXX => 54911XXXXXXXX
+ * - 15XXXXXXXX => 54911XXXXXXXX (15 -> 11)
+ * - XXXXXXXX (8 dígitos) => 54911 + XXXXXXXX (default área 11)
+ * - 011... => quita 0 inicial
+ */
+function normalizeArPhone(raw: unknown, defaultArea = '11'): string {
+  let s = onlyDigits(raw)
+
+  if (s.startsWith('0')) s = s.replace(/^0+/, '')
+
+  if (s.startsWith('549') && s.length >= 12) return s
+
+  if (s.startsWith('54') && !s.startsWith('549')) {
+    s = '549' + s.slice(2)
+    return s
+  }
+
+  if (s.length === 10 && s.startsWith('15')) {
+    s = defaultArea + s.slice(2)
+    return '549' + s
+  }
+
+  if (s.length === 10 && s.startsWith(defaultArea)) {
+    return '549' + s
+  }
+
+  if (s.length === 8) {
+    return '549' + defaultArea + s
+  }
+
+  return s
+}
+
+/** Parsea TXT/CSV pegado aceptando separadores: tab, coma, ;, | */
+function parseImportTextSmart(text: string): Array<{ phone: string; name?: string }> {
+  const lines = safeStr(text)
+    .split(/\r?\n/g)
+    .map((l) => l.trim())
+    .filter(Boolean)
+
+  const out: Array<{ phone: string; name?: string }> = []
+
+  for (const line of lines) {
+    const parts = line
+      .split(/[\t,;|]+/g)
+      .map((x) => x.trim())
+      .filter(Boolean)
+
+    if (!parts.length) continue
+
+    const candA = onlyDigits(parts[0] ?? '')
+    const candB = onlyDigits(parts[1] ?? '')
+    const aLooksPhone = candA.length >= 8
+    const bLooksPhone = candB.length >= 8
+
+    let phoneRaw: unknown = ''
+    let nameRaw: unknown = ''
+
+    if (aLooksPhone && !bLooksPhone) {
+      phoneRaw = parts[0] ?? ''
+      nameRaw = parts[1] ?? ''
+    } else if (!aLooksPhone && bLooksPhone) {
+      nameRaw = parts[0] ?? ''
+      phoneRaw = parts[1] ?? ''
+    } else {
+      phoneRaw = parts[0] ?? ''
+      nameRaw = parts[1] ?? ''
+    }
+
+    const phone = normalizeArPhone(phoneRaw)
+    if (!phone) continue
+
+    const name = normName(nameRaw)
+    out.push(name ? { phone, name } : { phone })
+  }
+
+  return out
+}
+
+/** XLS/XLSX: Col A nombre, Col B número (o viceversa). */
+async function parseImportXlsx(file: File): Promise<Array<{ phone: string; name?: string }>> {
+  const buf = await file.arrayBuffer()
+  const wb = XLSX.read(buf, { type: 'array' })
+
+  const sheetName = wb.SheetNames?.[0]
+  if (!sheetName) return []
+
+  // ✅ Evitar any de wb.Sheets
+  const sheetsUnknown: unknown = (wb as unknown as { Sheets?: unknown }).Sheets
+  const sheetsRec: AnyRecord | null = isRecord(sheetsUnknown) ? sheetsUnknown : null
+  if (!sheetsRec) return []
+
+  const wsUnknown: unknown = sheetsRec[sheetName]
+  if (!isRecord(wsUnknown)) return []
+
+  const ws = wsUnknown as unknown as XLSX.WorkSheet
+
+  // ✅ Evitar any + unbound-method: NO extraer el método sin bind/call
+  const utilsUnknown: unknown = XLSX.utils as unknown
+  const utilsRec: AnyRecord | null = isRecord(utilsUnknown) ? utilsUnknown : null
+  if (!utilsRec) return []
+
+  const fnUnknown: unknown = utilsRec['sheet_to_json']
+  if (typeof fnUnknown !== 'function') return []
+
+  // llamamos con .call(utilsRec, ...) para evitar unbound-method
+  const rowsUnknown: unknown = (fnUnknown as (
+    this: unknown,
+    ws: XLSX.WorkSheet,
+    opts: XLSX.Sheet2JSONOpts,
+  ) => unknown).call(utilsRec, ws, { header: 1, raw: true })
+
+  const rows: unknown[] = Array.isArray(rowsUnknown) ? rowsUnknown : []
+
+  const out: Array<{ phone: string; name?: string }> = []
+
+  for (const row of rows) {
+    if (!Array.isArray(row) || row.length === 0) continue
+
+    const c0 = row[0]
+    const c1 = row[1]
+
+    const d0 = onlyDigits(c0)
+    const d1 = onlyDigits(c1)
+
+    const c0LooksPhone = d0.length >= 8
+    const c1LooksPhone = d1.length >= 8
+
+    let nameRaw: unknown = ''
+    let phoneRaw: unknown = ''
+
+    if (!c0LooksPhone && c1LooksPhone) {
+      nameRaw = c0
+      phoneRaw = c1
+    } else if (c0LooksPhone && !c1LooksPhone) {
+      phoneRaw = c0
+      nameRaw = c1
+    } else {
+      nameRaw = c0
+      phoneRaw = c1
+    }
+
+    const phone = normalizeArPhone(phoneRaw)
+    if (!phone) continue
+
+    const name = normName(nameRaw)
+    out.push(name ? { phone, name } : { phone })
+  }
+
+  return out
+}
+
+/* =========================
    Types UI
    ========================= */
 type UiStatus = 'idle' | 'sending' | 'sent' | 'delivered' | 'read' | 'failed'
@@ -90,9 +263,7 @@ type StatusRespOk = {
 type StatusRespErr = { ok: false; error: string }
 type StatusResp = StatusRespOk | StatusRespErr
 
-type HealthResp =
-  | { ok: true; configured: boolean; baseUrl: string }
-  | { ok: false; error: string }
+type HealthResp = { ok: true; configured: boolean; baseUrl: string } | { ok: false; error: string }
 
 type CampaignStatus = 'draft' | 'running' | 'paused' | 'done' | 'cancelled' | 'failed'
 
@@ -304,26 +475,6 @@ function parseBlocksResp(u: unknown): BlockCfg[] {
   return out.sort((a, b) => a.id - b.id)
 }
 
-/* =========================
-   CSV helpers (import phones)
-   ========================= */
-function parseImportCsv(text: string): Array<{ phone: string; name?: string }> {
-  const lines = String(text ?? '')
-    .split(/\r?\n/g)
-    .map((l) => l.trim())
-    .filter(Boolean)
-
-  const rows: Array<{ phone: string; name?: string }> = []
-  for (const line of lines) {
-    const parts = line.split(',').map((x) => x.trim())
-    const phone = normPhone(parts[0] ?? '')
-    const name = (parts[1] ?? '').trim()
-    if (!phone) continue
-    rows.push(name ? { phone, name } : { phone })
-  }
-  return rows
-}
-
 export function WhatsappScreen() {
   const apiBase = useMemo(() => getApiBase(), [])
   const { token } = useAuth()
@@ -344,7 +495,7 @@ export function WhatsappScreen() {
   const [out, setOut] = useState<string>('')
   const [uiStatus, setUiStatus] = useState<UiStatus>('idle')
   const [internalId, setInternalId] = useState<string | null>(null)
-  const toNorm = useMemo(() => normPhone(to), [to])
+  const toNorm = useMemo(() => normalizeArPhone(to), [to])
 
   // ===== BLOCKS =====
   const [blocks, setBlocks] = useState<BlockCfg[]>([])
@@ -353,8 +504,40 @@ export function WhatsappScreen() {
   // ===== IMPORT PHONES =====
   const [impBlockId, setImpBlockId] = useState<string>('')
   const [impTags, setImpTags] = useState<string>('')
-  const [impCsv, setImpCsv] = useState<string>('')
+  const [impCsv, setImpCsv] = useState<string>('') // TXT/CSV pegado o “preview” de XLS
   const [impOut, setImpOut] = useState<string>('')
+
+  const impFileRef = useRef<HTMLInputElement | null>(null)
+  function openImpFilePicker() {
+    impFileRef.current?.click()
+  }
+
+  async function handleImpFilePicked(file: File) {
+    setImpOut('Leyendo archivo...')
+    try {
+      const ext = (file.name.split('.').pop() || '').toLowerCase()
+
+      let rows: Array<{ phone: string; name?: string }> = []
+
+      if (ext === 'xls' || ext === 'xlsx') {
+        rows = await parseImportXlsx(file)
+      } else {
+        const raw = await file.text()
+        rows = parseImportTextSmart(raw)
+      }
+
+      if (!rows.length) {
+        setImpOut('No se detectaron teléfonos válidos en el archivo.')
+        return
+      }
+
+      const asText = rows.map((r) => (r.name ? `${r.phone},${r.name}` : r.phone)).join('\n')
+      setImpCsv(asText)
+      setImpOut(`OK: detectados ${rows.length} registros. Listo para “Importar números al bloque”.`)
+    } catch (e: unknown) {
+      setImpOut(errToMessage(e))
+    }
+  }
 
   // ===== CAMPAIGNS =====
   const [campName, setCampName] = useState('Campaña WhatsApp')
@@ -375,7 +558,7 @@ export function WhatsappScreen() {
   const lockCreate = useRef(false)
   const lockAction = useRef(false)
 
-  // Health/config (solo al montar o cambiar token)
+  // Health/config
   useEffect(() => {
     let alive = true
     const run = async () => {
@@ -396,7 +579,7 @@ export function WhatsappScreen() {
     }
   }, [apiBase, token])
 
-  // Blocks: solo tab campaigns (manual refresh)
+  // Blocks
   useEffect(() => {
     if (tab !== 'campaigns') return
     let alive = true
@@ -429,7 +612,7 @@ export function WhatsappScreen() {
     }
   }, [apiBase, token, tab, refreshKey])
 
-  // Status TEST: solo si internalId y tab test (manual refresh)
+  // Status TEST
   useEffect(() => {
     if (tab !== 'test') return
     if (!internalId) return
@@ -474,7 +657,7 @@ export function WhatsappScreen() {
     }
   }, [apiBase, internalId, token, tab, refreshKey])
 
-  // List campaigns: tab campaigns/metrics (manual refresh)
+  // List campaigns
   useEffect(() => {
     if (tab !== 'campaigns' && tab !== 'metrics') return
     let alive = true
@@ -500,7 +683,7 @@ export function WhatsappScreen() {
     }
   }, [apiBase, token, tab, refreshKey])
 
-  // Campaign detail: tab metrics + selected id (manual refresh)
+  // Campaign detail
   useEffect(() => {
     if (tab !== 'metrics') return
     if (!selectedCampaignId) return
@@ -578,13 +761,17 @@ export function WhatsappScreen() {
         return
       }
 
-      const rows = parseImportCsv(impCsv)
+      const rows = parseImportTextSmart(impCsv)
       if (!rows.length) {
-        setImpOut('CSV vacío o inválido. Formato: 54911xxxxxxx o 54911xxxxxxx,Nombre')
+        setImpOut('Lista vacía o inválida. Pegá números o importá XLS/TXT.')
         return
       }
 
-      const payload = { blockId: blockIdNum, tags: impTags.trim() || undefined, rows }
+      // ✅ tags optativo: vacío => nombre del bloque
+      const blockName = blocks.find((b) => b.id === blockIdNum)?.name?.trim() || ''
+      const effectiveTags = impTags.trim() || blockName || undefined
+
+      const payload = { blockId: blockIdNum, tags: effectiveTags, rows }
 
       const r = await fetch(`${apiBase}/whapi/recipients/import-phones`, {
         method: 'POST',
@@ -643,7 +830,7 @@ export function WhatsappScreen() {
         setSelectedCampaignId(resp.id)
         setTab('metrics')
         setLastUpdated(new Date().toLocaleTimeString())
-        bumpRefresh()
+        setRefreshKey((x) => x + 1)
         return
       }
 
@@ -669,7 +856,7 @@ export function WhatsappScreen() {
       const j: unknown = await r.json().catch(() => null)
       setCampMsg(isRecord(j) ? JSON.stringify(j, null, 2) : 'OK')
       setLastUpdated(new Date().toLocaleTimeString())
-      bumpRefresh()
+      setRefreshKey((x) => x + 1)
     } catch (e: unknown) {
       setCampMsg(errToMessage(e))
     } finally {
@@ -706,14 +893,10 @@ export function WhatsappScreen() {
           {blocksMsg ? <span className="waPill waPill--warn">{blocksMsg}</span> : null}
         </div>
 
-        {/* ✅ SOLO MANUAL */}
         <div className="waScreen__actions" style={{ justifyContent: 'flex-start', gap: 10 }}>
           <button className="waBtn" type="button" onClick={() => bumpRefresh()}>
             Actualizar
           </button>
-          <div className="waScreen__note" style={{ margin: 0 }}>
-            Sin auto-actualizar: para evitar gasto de solicitudes.
-          </div>
         </div>
 
         <div className="waTabs">
@@ -772,7 +955,7 @@ export function WhatsappScreen() {
                 className="waScreen__input"
                 value={to}
                 onChange={(e) => setTo(e.target.value)}
-                placeholder="Ej: 54911XXXXXXXX"
+                placeholder="Ej: 11XXXXXXXX o 15XXXXXXXX (se arma 549...)"
                 inputMode="numeric"
               />
               <div className="waScreen__hint">
@@ -807,7 +990,27 @@ export function WhatsappScreen() {
 
       {tab === 'campaigns' && (
         <div className="waScreen__card">
-          <div className="waSectionTitle">Importar números (CSV)</div>
+          <input
+            ref={impFileRef}
+            type="file"
+            accept=".txt,.csv,.list,.xls,.xlsx,text/plain,text/csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            style={{ display: 'none' }}
+            onChange={(e) => {
+              const f = e.target.files?.[0]
+              e.target.value = ''
+              if (f) void handleImpFilePicked(f)
+            }}
+          />
+
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+            <div className="waSectionTitle" style={{ margin: 0 }}>
+              Importar números
+            </div>
+
+            <button className="waBtn" type="button" onClick={openImpFilePicker}>
+              Importar XLS/TXT
+            </button>
+          </div>
 
           <div className="waGrid2">
             <label className="waScreen__field">
@@ -826,25 +1029,28 @@ export function WhatsappScreen() {
             </label>
 
             <label className="waScreen__field">
-              <span className="waScreen__label">Tags opcionales (CSV)</span>
+              <span className="waScreen__label">Tags (opcional)</span>
               <input
                 className="waScreen__input"
                 value={impTags}
                 onChange={(e) => setImpTags(e.target.value)}
-                placeholder="Ej: ventas,frio,medic"
+                placeholder="Vacío = se usa el nombre del bloque"
               />
-              <div className="waScreen__hint">Se guardan en el Recipient para filtrar campañas.</div>
+              <div className="waScreen__hint">Si lo dejás vacío, se autocompleta con el nombre del bloque.</div>
             </label>
 
             <label className="waScreen__field waGrid2__span2">
-              <span className="waScreen__label">Pegar CSV (una fila por línea)</span>
+              <span className="waScreen__label">Lista (una fila por línea)</span>
               <textarea
                 className="waScreen__textarea"
                 value={impCsv}
                 onChange={(e) => setImpCsv(e.target.value)}
                 rows={6}
-                placeholder={`Ej:\n5491122334455,Juan Perez\n5491199988877`}
+                placeholder={`Ej:\n1135006833,Rios Maximina\n1561346246\n11XXXXXXX`}
               />
+              <div className="waScreen__hint">
+                Formatos aceptados: <b>11XXXXXXXX</b>, <b>15XXXXXXXX</b>, <b>549...</b> + separadores coma/tab/;/|
+              </div>
             </label>
           </div>
 

@@ -4,10 +4,16 @@ import { AppModule } from './app.module'
 
 function parseOrigins(v: string | undefined): string[] | true {
   const s = String(v ?? '').trim()
-  if (!s) return true // si no hay env, permitimos todo (mejor para debug)
+
+  // ✅ si no hay env, permitimos todo (mejor para debug local)
+  if (!s) return true
+
+  // ✅ soporte: "*" => allow all
+  if (s === '*') return true
+
   return s
     .split(',')
-    .map(x => x.trim())
+    .map((x) => x.trim())
     .filter(Boolean)
 }
 
@@ -27,7 +33,8 @@ async function bootstrap() {
   )
 
   const port = Number(process.env.PORT || 3001)
-  await app.listen(port, '0.0.0.0') // ✅ importante en Render
+  await app.listen(port, '0.0.0.0')
+  // eslint-disable-next-line no-console
   console.log(`API running on port ${port}`)
 }
 
