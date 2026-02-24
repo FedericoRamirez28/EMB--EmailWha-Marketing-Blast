@@ -1,4 +1,4 @@
-const API_URL = import.meta.env.VITE_API_URL as string
+const API_URL = (import.meta.env.VITE_API_URL as string) || 'http://localhost:3001'
 
 type JsonPrimitive = string | number | boolean | null
 type JsonValue = JsonPrimitive | JsonValue[] | { [k: string]: JsonValue }
@@ -7,11 +7,16 @@ function isObject(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null
 }
 
+function joinUrl(base: string, path: string) {
+  const b = String(base || '').replace(/\/+$/, '')
+  const p = String(path || '')
+  return `${b}${p.startsWith('/') ? '' : '/'}${p}`
+}
+
 async function parseJsonSafe(res: Response): Promise<JsonValue | null> {
   const ct = res.headers.get('content-type') || ''
   if (!ct.includes('application/json')) return null
   try {
-    // res.json() puede venir como any/unknown según lib; lo normalizamos a JsonValue
     return (await res.json()) as JsonValue
   } catch {
     return null
@@ -42,10 +47,12 @@ async function request<T>(
   }
   if (token) headers.Authorization = `Bearer ${token}`
 
-  const res = await fetch(`${API_URL}${path}`, {
+  const res = await fetch(joinUrl(API_URL, path), {
     method,
     headers,
     body: body !== undefined ? JSON.stringify(body) : undefined,
+    // ✅ si en el futuro usás cookies/sesión
+    // credentials: 'include',
   })
 
   const payload = await parseJsonSafe(res)

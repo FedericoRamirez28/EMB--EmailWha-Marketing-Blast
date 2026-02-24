@@ -1,60 +1,51 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common'
+import { Injectable } from '@nestjs/common'
 import { PrismaService } from '@/prisma/prisma.service'
+import { UpsertBlockDto, type BlockChannel } from './dto/upsert-block.dto'
 
-const MAX_BLOCK_CAPACITY = 2000
-
-function clampInt(n: unknown, min: number, max: number) {
-  const x = Number(n)
-  if (!Number.isFinite(x)) return min
-  return Math.max(min, Math.min(max, Math.trunc(x)))
+const DEFAULT_BLOCKS: Record<BlockChannel, Array<{ id: number; name: string; capacity: number }>> = {
+  whatsapp: [{ id: 1, name: 'Bloque 1', capacity: 250 }],
+  email: [{ id: 1, name: 'Bloque 1', capacity: 250 }],
 }
 
 @Injectable()
 export class BlocksService {
-  constructor(private prisma: PrismaService) {}
+  constructor(private readonly prisma: PrismaService) {}
 
-  async list() {
-    const blocks = await this.prisma.block.findMany({ orderBy: { id: 'asc' } })
-    return [...blocks, { id: 0, name: 'Sin bloque', capacity: 999999 }]
-  }
-
-  private async nextId(): Promise<number> {
-    const maxRow = await this.prisma.block.findFirst({
-      orderBy: { id: 'desc' },
-      select: { id: true },
+  async list(channel: BlockChannel) {
+    const blocks = await this.prisma.block.findMany({
+      where: { channel },
+      orderBy: { id: 'asc' },
     })
-    return (maxRow?.id ?? 0) + 1
-  }
 
-  async createOrUpsert(data: { id?: number; name: string; capacity: number }) {
-    const hasId = typeof data.id === 'number' && Number.isInteger(data.id) && data.id > 0
-    const id = hasId ? (data.id as number) : await this.nextId()
-
-    if (!Number.isInteger(id) || id <= 0) {
-      throw new BadRequestException('Block id inválido (debe ser > 0)')
+    // ✅ garantía: si está vacío, crea Bloque 1 en ese canal
+    if (!blocks.length) {
+      await this.prisma.block.createMany({
+        data: DEFAULT_BLOCKS[channel].map((b) => ({ ...b, channel })),
+      })
+      return this.prisma.block.findMany({ where: { channel }, orderBy: { id: 'asc' } })
     }
 
-    const name = String(data.name ?? '').trim() || `Bloque ${id}`
-    const capacity = clampInt(data.capacity, 1, MAX_BLOCK_CAPACITY)
+    return blocks
+  }
+
+  async upsert(dto: UpsertBlockDto, forceChannel: BlockChannel) {
+    const channel = (dto.channel ?? forceChannel) as BlockChannel
 
     return this.prisma.block.upsert({
-      where: { id },
-      update: { name, capacity },
-      create: { id, name, capacity },
+      where: { id_channel: { id: dto.id, channel } },
+      update: { name: dto.name, capacity: dto.capacity },
+      create: { id: dto.id, channel, name: dto.name, capacity: dto.capacity },
     })
   }
 
-  async remove(id: number) {
-    if (!Number.isInteger(id) || id <= 0) throw new BadRequestException('id inválido')
-    const existing = await this.prisma.block.findUnique({ where: { id } })
-    if (!existing) throw new NotFoundException('Bloque no existe')
+  async remove(id: number, channel: BlockChannel) {
+    // ✅ borra por PK compuesta
+    await this.prisma.block
+      .delete({
+        where: { id_channel: { id, channel } },
+      })
+      .catch(() => null)
 
-    await this.prisma.recipient.updateMany({
-      where: { blockId: id },
-      data: { blockId: 0 },
-    })
-
-    await this.prisma.block.delete({ where: { id } })
     return { ok: true }
   }
 }

@@ -1,41 +1,43 @@
 import { Injectable } from '@nestjs/common'
 import { PrismaService } from '@/prisma/prisma.service'
-import { CreateManyDto } from './dto/create-many.dto'
+import { CreateManyWaDto } from './dto/create-many-wa.dto'
+
+function normPhone(raw: any): string {
+  return String(raw ?? '').replace(/[^\d]/g, '').trim()
+}
 
 @Injectable()
-export class RecipientsService {
+export class WhatsappRecipientsService {
   constructor(private readonly prisma: PrismaService) {}
 
   async list() {
-    // ✅ solo EMAIL: tiene email != null
     return this.prisma.recipient.findMany({
-      where: { email: { not: null } },
+      where: { phone: { not: null } },
       orderBy: { id: 'desc' },
       select: {
         id: true,
         name: true,
-        email: true,
+        phone: true,
         tags: true,
-        emailBlockId: true,
+        whatsappBlockId: true,
         createdAt: true,
       },
     })
   }
 
-  async createMany(dto: CreateManyDto) {
-    // dto.recipients[]: { name, email, tags, blockId }
+  async createMany(dto: CreateManyWaDto) {
     const data = dto.recipients
       .map((r) => ({
+        phone: normPhone(r.phone) || null,
         name: String(r.name ?? ''),
-        email: String(r.email ?? '').trim() || null,
         tags: String(r.tags ?? ''),
-        emailBlockId: Number(r.blockId ?? 0),
+        whatsappBlockId: Number(r.blockId ?? 0),
       }))
-      .filter((x) => !!x.email)
+      .filter((x) => !!x.phone)
 
     if (!data.length) return { ok: true, created: 0 }
 
-    // createMany no soporta upsert -> usamos createMany con skipDuplicates si email unique
+    // phone es unique (nullable). usamos createMany + skipDuplicates
     const res = await this.prisma.recipient.createMany({
       data,
       skipDuplicates: true,
@@ -57,7 +59,7 @@ export class RecipientsService {
   async bulkMove(ids: number[], blockId: number) {
     await this.prisma.recipient.updateMany({
       where: { id: { in: ids } },
-      data: { emailBlockId: blockId },
+      data: { whatsappBlockId: blockId },
     })
     return { ok: true }
   }

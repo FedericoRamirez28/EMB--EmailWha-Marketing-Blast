@@ -1,0 +1,297 @@
+/* src/styles/components/ui/_WaRecipientsPanel.scss */
+
+.wrp {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space);
+}
+
+.wrp__actionsTop {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.wrp__insertRow {
+  display: grid;
+  grid-template-columns: 140px 280px 1fr;
+  gap: 10px;
+  align-items: center;
+
+  @media (max-width: 900px) {
+    grid-template-columns: 1fr;
+  }
+}
+
+.wrp__insertLabel {
+  font-weight: 700;
+}
+
+.wrp__hint {
+  font-size: 0.82rem;
+  color: var(--color-ink-soft);
+  line-height: 1.25;
+}
+
+.wrp__blocksChips {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.wrp__importRow {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+
+/* ✅ IMPORTANTE:
+   Antes estaba position:relative y el panel podía “flotar”.
+   Para que empuje el layout hacia abajo, lo dejamos en flow normal. */
+.wrp__more {
+  position: static;
+  display: inline-flex;
+  width: 100%;
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.wrp__chev {
+  opacity: 0.7;
+}
+
+/* ✅ Collapsible PRO:
+   - No uses display:none (no anima)
+   - max-height/opacity/transform + overflow hidden
+*/
+.wrp__morePanel {
+    width: 100%;
+  max-width: 100%;
+  margin-top: 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: 12px;
+  background: rgba(255, 255, 255, 0.75);
+  backdrop-filter: blur(10px);
+
+  overflow: hidden;
+  max-height: 0;
+  opacity: 0;
+  transform: translateY(-6px);
+  pointer-events: none;
+
+  transition:
+    max-height 320ms cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 200ms ease,
+    transform 240ms ease;
+}
+
+/* cuando abre */
+.wrp__more.is-open .wrp__morePanel {
+  max-height: 100%;
+  max-width: 100%; /* suficiente para tu contenido */
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: auto;
+}
+
+/* opcional: mejora si el usuario prefiere menos motion */
+@media (prefers-reduced-motion: reduce) {
+  .wrp__morePanel {
+    transition: none;
+  }
+}
+
+.wrp__moreGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+
+  @media (max-width: 900px) {
+    grid-template-columns: 1fr;
+  }
+}
+
+.wrp__span2 {
+  grid-column: 1 / -1;
+}
+
+.wrp__moreActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.wrp__field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.wrp__textarea {
+  min-height: 120px;
+  resize: vertical;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
+  font-size: 0.85rem;
+}
+
+.wrp__toolbar {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 12px;
+}
+
+.wrp__search {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.wrp__bulkBtns {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.wrp__moveBar {
+  border-top: 1px solid var(--color-border);
+  padding-top: 12px;
+}
+
+.wrp__moveRow {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.wrp__badgeNum {
+  margin-left: 6px;
+}
+
+.wrp__moveSelect {
+  min-width: 260px;
+}
+
+.wrp__tableWrap {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  overflow: auto;
+  background: #fff;
+}
+
+.wrp__colCheck {
+  width: 52px;
+}
+.wrp__colTags {
+  width: 220px;
+}
+.wrp__colActions {
+  width: 140px;
+}
+
+.wrp__tdCheck {
+  text-align: center;
+}
+
+.wrp__tdActions {
+  text-align: right;
+}
+
+.wrp__empty {
+  padding: 18px;
+  opacity: 0.75;
+  text-align: center;
+}
+
+.wrp__meta {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--color-ink-soft);
+}
+
+/* ===== Modal ===== */
+.wrp__modalOverlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 18px;
+  z-index: 80;
+}
+
+.wrp__modalCard {
+  width: min(920px, 100%);
+  max-height: min(78vh, 820px);
+  overflow: auto;
+}
+
+.wrp__modalHeader {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.wrp__modalTitle {
+  margin: 0;
+}
+
+.wrp__modalBody {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.wrp__modalGridHead {
+  display: grid;
+  grid-template-columns: 1fr 160px 120px;
+  gap: 10px;
+  opacity: 0.85;
+}
+
+.wrp__modalList {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.wrp__modalRow {
+  display: grid;
+  grid-template-columns: 1fr 160px 120px;
+  gap: 10px;
+  align-items: center;
+}
+
+.wrp__rowRight {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.wrp__right {
+  text-align: right;
+}
+
+.wrp__emptyBox {
+  padding: 14px;
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-md);
+  opacity: 0.8;
+}
+
+.wrp__modalFooter {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin-top: 10px;
+}
+
+.wrp__spacer {
+  flex: 1;
+}

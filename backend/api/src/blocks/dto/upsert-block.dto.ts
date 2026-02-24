@@ -1,19 +1,21 @@
-import { Type } from 'class-transformer'
-import { IsInt, IsOptional, IsString, Max, Min } from 'class-validator'
+import { IsEnum, IsInt, IsOptional, IsString, Max, Min } from 'class-validator'
+
+export type BlockChannel = 'whatsapp' | 'email'
 
 export class UpsertBlockDto {
-  @Type(() => Number)
   @IsInt()
-  @Min(1)
-  @IsOptional()
-  id?: number
+  id!: number
 
   @IsString()
   name!: string
 
-  @Type(() => Number)
   @IsInt()
   @Min(1)
   @Max(2000)
   capacity!: number
+
+  // ✅ opcional, si no mandás nada => whatsapp
+  @IsOptional()
+  @IsEnum(['whatsapp', 'email'])
+  channel?: BlockChannel
 }

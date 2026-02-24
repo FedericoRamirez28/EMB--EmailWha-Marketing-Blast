@@ -1,12 +1,12 @@
 import { Body, Controller, Delete, Get, Param, ParseIntPipe, Post, UseGuards } from '@nestjs/common'
 import { JwtGuard } from '@/auth/jwt.guard'
-import { RecipientsService } from './recipients.service'
-import { CreateManyDto } from './dto/create-many.dto'
+import { WhatsappRecipientsService } from './whatsapp-recipients.service'
+import { CreateManyWaDto } from './dto/create-many-wa.dto'
 
 @UseGuards(JwtGuard)
-@Controller('recipients')
-export class RecipientsController {
-  constructor(private readonly recipients: RecipientsService) {}
+@Controller('whatsapp/recipients')
+export class WhatsappRecipientsController {
+  constructor(private readonly recipients: WhatsappRecipientsService) {}
 
   @Get()
   list() {
@@ -14,7 +14,7 @@ export class RecipientsController {
   }
 
   @Post('create-many')
-  createMany(@Body() dto: CreateManyDto) {
+  createMany(@Body() dto: CreateManyWaDto) {
     return this.recipients.createMany(dto)
   }
 

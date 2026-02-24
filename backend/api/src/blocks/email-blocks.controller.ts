@@ -4,22 +4,22 @@ import { BlocksService } from './blocks.service'
 import { UpsertBlockDto } from './dto/upsert-block.dto'
 
 @UseGuards(JwtGuard)
-@Controller('blocks')
-export class BlocksController {
+@Controller('email/blocks')
+export class EmailBlocksController {
   constructor(private readonly blocks: BlocksService) {}
 
   @Get()
-  listWhatsapp() {
-    return this.blocks.list('whatsapp')
+  listEmail() {
+    return this.blocks.list('email')
   }
 
   @Post('upsert')
-  upsertWhatsapp(@Body() dto: UpsertBlockDto) {
-    return this.blocks.upsert(dto, 'whatsapp')
+  upsertEmail(@Body() dto: UpsertBlockDto) {
+    return this.blocks.upsert(dto, 'email')
   }
 
   @Delete(':id')
-  removeWhatsapp(@Param('id', ParseIntPipe) id: number) {
-    return this.blocks.remove(id, 'whatsapp')
+  removeEmail(@Param('id', ParseIntPipe) id: number) {
+    return this.blocks.remove(id, 'email')
   }
 }

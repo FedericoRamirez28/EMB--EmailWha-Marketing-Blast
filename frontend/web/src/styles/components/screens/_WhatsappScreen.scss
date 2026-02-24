@@ -1,9 +1,17 @@
-/* Bridge para que WhatsAppScreen adopte UI Medic sin reescribir JSX */
+/* src/styles/components/screens/_WhatsappScreen.scss */
 
+/* ===== WhatsApp Screen (layout con scroll interno) ===== */
 .waScreen {
-  max-width: 1100px;
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+
+  /* ✅ FULL WIDTH como wireframe */
+  width: 100%;
+  max-width: 100%; /* podés subir a 1600 si querés aún más */
   margin: 18px auto;
-  padding: 0 14px;
+  padding: 0 16px; /* aire a los costados */
 }
 
 .waScreen__head {
@@ -12,13 +20,20 @@
   box-shadow: var(--shadow-soft);
   padding: var(--space-lg);
   margin-bottom: 16px;
+  flex: 0 0 auto;
+}
+
+.waScreen__body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto; /* ✅ scroll interno */
+  padding-bottom: 10px;
 }
 
 .waScreen__title {
   font-size: 1.15rem;
   font-weight: 700;
 }
-
 .waScreen__subtitle {
   margin-top: 4px;
   color: var(--color-ink-soft);
@@ -30,6 +45,18 @@
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
+}
+
+.waScreen__actions {
+  margin-top: 12px;
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: center;
+
+  &--head {
+    justify-content: flex-start;
+  }
 }
 
 /* Pills */
@@ -91,7 +118,7 @@
   @extend .btn;
   @extend .btn--ghost;
   padding: 7px 12px;
-  font-weight: 600;
+  font-weight: 700;
 
   &--active {
     @extend .btn--outline;
@@ -99,18 +126,66 @@
   }
 }
 
-/* Card genérica de la screen */
+/* Subtabs de campañas */
+.waSubTabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+}
+
+.waSubTab {
+  @extend .btn;
+  @extend .btn--ghost;
+  font-weight: 800;
+
+  &.is-active {
+    @extend .btn--outline;
+    background: var(--color-primary-soft);
+  }
+}
+
+/* Card genérica */
 .waScreen__card {
   @extend .card;
 }
 
+/* Split card (test) */
+.waCardSplit {
+  display: grid;
+  grid-template-columns: 1fr 380px;
+  gap: 14px;
+
+  @media (max-width: 980px) {
+    grid-template-columns: 1fr;
+  }
+}
+
+.waCardSplit__right {
+  background: #0b1220;
+  border-radius: var(--radius-md);
+  padding: 12px;
+  color: #cbd5e1;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  min-height: 0;
+}
+
+.waRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+
+  &--between {
+    justify-content: space-between;
+  }
+}
+
 .waSectionTitle {
-  font-weight: 700;
+  font-weight: 800;
   font-size: 1rem;
   margin-bottom: 6px;
 }
 
-/* Fields */
 .waScreen__field {
   display: flex;
   flex-direction: column;
@@ -138,10 +213,15 @@
   resize: vertical;
 }
 
-/* Botones WA */
+/* Botones */
 .waBtn {
   @extend .btn;
   @extend .btn--outline;
+
+  &--ghost {
+    @extend .btn;
+    @extend .btn--ghost;
+  }
 }
 
 .waScreen__primary {
@@ -169,14 +249,7 @@
   }
 }
 
-/* Separadores y logs */
-.waHr {
-  height: 1px;
-  background: var(--color-border);
-  margin: 10px 0;
-}
-
-.waScreen__log,
+/* Logs */
 .waMiniLog {
   margin-top: 14px;
   background: #0b1220;
@@ -186,16 +259,16 @@
   border: 1px solid rgba(255, 255, 255, 0.08);
 }
 
-.waScreen__logTitle,
-.waMiniLog__title {
-  font-weight: 700;
+.waMiniLog__title,
+.waScreen__logTitle {
+  font-weight: 800;
   margin-bottom: 8px;
   font-size: 0.85rem;
   color: #e2e8f0;
 }
 
-.waScreen__pre,
-.waMiniLog__pre {
+.waMiniLog__pre,
+.waScreen__pre {
   margin: 0;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
   font-size: 0.82rem;
@@ -208,6 +281,10 @@
   border-radius: var(--radius-md);
   border: 1px solid var(--color-border);
   background: #fff;
+
+  &--max {
+    max-height: 420px; /* ✅ no estira todo */
+  }
 }
 
 .waTable {
@@ -263,4 +340,60 @@
   color: var(--color-ink-soft);
   min-width: 64px;
   text-align: right;
+}
+
+/* Head de bloques */
+.waBlocksHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.waBlocksHead__actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.waCaret {
+  display: inline-block;
+  margin-left: 4px;
+}
+
+/* Acordeón “Más opciones de carga” */
+.waAccordion {
+  margin-top: 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: 12px;
+  background: rgba(255, 255, 255, 0.65);
+}
+
+.waAccordion__title {
+  font-weight: 800;
+  margin-bottom: 8px;
+  color: var(--color-ink);
+}
+
+.waAccordion__actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+}
+
+/* Botón link tabla */
+.waLinkBtn {
+  @extend .btn;
+  @extend .btn--ghost;
+  padding: 6px 10px;
+  font-weight: 800;
+}
+
+/* list */
+.waCampaignList__title {
+  font-weight: 800;
+  margin-bottom: 8px;
 }

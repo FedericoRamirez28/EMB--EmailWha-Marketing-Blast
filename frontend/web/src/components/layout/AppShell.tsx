@@ -26,11 +26,6 @@ export function AppShell() {
           <NavLink to="/" end className={({ isActive }) => `appShell__tab ${isActive ? 'is-active' : ''}`}>
             Email
           </NavLink>
-
-          <NavLink to="/recipients" className={({ isActive }) => `appShell__tab ${isActive ? 'is-active' : ''}`}>
-            Destinatarios
-          </NavLink>
-
           <NavLink to="/whatsapp" className={({ isActive }) => `appShell__tab ${isActive ? 'is-active' : ''}`}>
             WhatsApp
           </NavLink>

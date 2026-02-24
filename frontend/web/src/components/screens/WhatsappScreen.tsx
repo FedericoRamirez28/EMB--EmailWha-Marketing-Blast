@@ -1,7 +1,9 @@
 // src/components/screens/WhatsappScreen.tsx
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import * as XLSX from 'xlsx'
-import { useAuth } from '@/auth/useAuth' // ajustá si tu path es distinto
+import Swal from 'sweetalert2'
+import { useAuth } from '@/auth/useAuth'
+import WaRecipientsPanel from '@/components/ui/WaRecipientsPanel'
 
 function getApiBase(): string {
   const v = import.meta.env.VITE_API_URL
@@ -57,7 +59,7 @@ function authHeaders(token?: string | null): Record<string, string> {
 }
 
 /* =========================
-   Normalización (sin no-base-to-string)
+   Normalización
    ========================= */
 function safeStr(raw: unknown): string {
   if (raw === null || raw === undefined) return ''
@@ -85,29 +87,22 @@ function onlyDigits(raw: unknown): string {
  */
 function normalizeArPhone(raw: unknown, defaultArea = '11'): string {
   let s = onlyDigits(raw)
-
   if (s.startsWith('0')) s = s.replace(/^0+/, '')
-
   if (s.startsWith('549') && s.length >= 12) return s
-
   if (s.startsWith('54') && !s.startsWith('549')) {
     s = '549' + s.slice(2)
     return s
   }
-
   if (s.length === 10 && s.startsWith('15')) {
     s = defaultArea + s.slice(2)
     return '549' + s
   }
-
   if (s.length === 10 && s.startsWith(defaultArea)) {
     return '549' + s
   }
-
   if (s.length === 8) {
     return '549' + defaultArea + s
   }
-
   return s
 }
 
@@ -165,17 +160,14 @@ async function parseImportXlsx(file: File): Promise<Array<{ phone: string; name?
   const sheetName = wb.SheetNames?.[0]
   if (!sheetName) return []
 
-  // ✅ Evitar any de wb.Sheets
   const sheetsUnknown: unknown = (wb as unknown as { Sheets?: unknown }).Sheets
   const sheetsRec: AnyRecord | null = isRecord(sheetsUnknown) ? sheetsUnknown : null
   if (!sheetsRec) return []
 
   const wsUnknown: unknown = sheetsRec[sheetName]
   if (!isRecord(wsUnknown)) return []
-
   const ws = wsUnknown as unknown as XLSX.WorkSheet
 
-  // ✅ Evitar any + unbound-method: NO extraer el método sin bind/call
   const utilsUnknown: unknown = XLSX.utils as unknown
   const utilsRec: AnyRecord | null = isRecord(utilsUnknown) ? utilsUnknown : null
   if (!utilsRec) return []
@@ -183,7 +175,6 @@ async function parseImportXlsx(file: File): Promise<Array<{ phone: string; name?
   const fnUnknown: unknown = utilsRec['sheet_to_json']
   if (typeof fnUnknown !== 'function') return []
 
-  // llamamos con .call(utilsRec, ...) para evitar unbound-method
   const rowsUnknown: unknown = (fnUnknown as (
     this: unknown,
     ws: XLSX.WorkSheet,
@@ -311,7 +302,9 @@ type CampaignDetail = CampaignDetailOk | CampaignDetailErr
 type CreateCampaignResp = { ok: true; id: string } | { ok: false; error: string }
 type ListCampaignsResp = { ok: true; data: CampaignRow[] } | { ok: false; error: string }
 
-type TabKey = 'test' | 'campaigns' | 'metrics'
+type TabKey = 'test' | 'campaigns' | 'blocks' | 'metrics'
+type CampaignsSubTab = 'create' | 'list'
+
 type BlockCfg = { id: number; name: string; capacity: number }
 type ImportPhonesResp =
   | { ok: true; inserted: number; updated: number; skipped: number }
@@ -475,6 +468,34 @@ function parseBlocksResp(u: unknown): BlockCfg[] {
   return out.sort((a, b) => a.id - b.id)
 }
 
+function swalOk(title: string, text?: string) {
+  return Swal.fire({
+    icon: 'success',
+    title,
+    text: text || undefined,
+    customClass: {
+      popup: 'swal-popup',
+      title: 'swal-title',
+      htmlContainer: 'swal-text',
+    },
+    confirmButtonText: 'OK',
+  })
+}
+
+function swalErr(title: string, text?: string) {
+  return Swal.fire({
+    icon: 'error',
+    title,
+    text: text || undefined,
+    customClass: {
+      popup: 'swal-popup',
+      title: 'swal-title',
+      htmlContainer: 'swal-text',
+    },
+    confirmButtonText: 'Cerrar',
+  })
+}
+
 export function WhatsappScreen() {
   const apiBase = useMemo(() => getApiBase(), [])
   const { token } = useAuth()
@@ -482,8 +503,11 @@ export function WhatsappScreen() {
   const [configured, setConfigured] = useState<boolean>(false)
 
   const [tab, setTab] = useState<TabKey>('campaigns')
+  const [campaignsSub, setCampaignsSub] = useState<CampaignsSubTab>('create')
   const [refreshKey, setRefreshKey] = useState(0)
   const [lastUpdated, setLastUpdated] = useState<string>('—')
+
+  const [showMoreLoad, setShowMoreLoad] = useState(false)
 
   function bumpRefresh(): void {
     setRefreshKey((x) => x + 1)
@@ -504,7 +528,7 @@ export function WhatsappScreen() {
   // ===== IMPORT PHONES =====
   const [impBlockId, setImpBlockId] = useState<string>('')
   const [impTags, setImpTags] = useState<string>('')
-  const [impCsv, setImpCsv] = useState<string>('') // TXT/CSV pegado o “preview” de XLS
+  const [impCsv, setImpCsv] = useState<string>('') // para “pegar lista” (acordeón)
   const [impOut, setImpOut] = useState<string>('')
 
   const impFileRef = useRef<HTMLInputElement | null>(null)
@@ -518,7 +542,6 @@ export function WhatsappScreen() {
       const ext = (file.name.split('.').pop() || '').toLowerCase()
 
       let rows: Array<{ phone: string; name?: string }> = []
-
       if (ext === 'xls' || ext === 'xlsx') {
         rows = await parseImportXlsx(file)
       } else {
@@ -531,11 +554,14 @@ export function WhatsappScreen() {
         return
       }
 
+      // dejamos un preview “oculto” sólo para import (no obligatorio mostrarlo)
       const asText = rows.map((r) => (r.name ? `${r.phone},${r.name}` : r.phone)).join('\n')
       setImpCsv(asText)
-      setImpOut(`OK: detectados ${rows.length} registros. Listo para “Importar números al bloque”.`)
+      setImpOut(`OK: detectados ${rows.length} registros. Listo para importar.`)
+      await swalOk('Archivo listo', `Detecté ${rows.length} registros. Ahora elegí el bloque y “Importar”.`)
     } catch (e: unknown) {
       setImpOut(errToMessage(e))
+      await swalErr('Error leyendo archivo', errToMessage(e))
     }
   }
 
@@ -579,9 +605,9 @@ export function WhatsappScreen() {
     }
   }, [apiBase, token])
 
-  // Blocks
+  // Blocks: los usamos en campañas + bloques
   useEffect(() => {
-    if (tab !== 'campaigns') return
+    if (tab !== 'campaigns' && tab !== 'blocks') return
     let alive = true
 
     const load = async () => {
@@ -729,6 +755,7 @@ export function WhatsappScreen() {
       if (!resp.ok || !resp.id) {
         setUiStatus('failed')
         setOut(JSON.stringify(resp, null, 2))
+        await swalErr('Error', resp.ok ? 'Error' : resp.error)
         return
       }
 
@@ -736,9 +763,11 @@ export function WhatsappScreen() {
       setInternalId(resp.id)
       setOut(JSON.stringify(resp, null, 2))
       setLastUpdated(new Date().toLocaleTimeString())
+      await swalOk('Enviado', 'Mensaje de prueba enviado. Podés actualizar estado.')
     } catch (e: unknown) {
       setUiStatus('failed')
       setOut(JSON.stringify({ ok: false, error: errToMessage(e) }, null, 2))
+      await swalErr('Error enviando', errToMessage(e))
     } finally {
       lockSend.current = false
     }
@@ -752,22 +781,24 @@ export function WhatsappScreen() {
     try {
       if (!token) {
         setImpOut('Error: no hay token. Iniciá sesión.')
+        await swalErr('Sin sesión', 'Iniciá sesión para importar.')
         return
       }
 
       const blockIdNum = Number(impBlockId)
       if (!Number.isFinite(blockIdNum) || blockIdNum <= 0) {
         setImpOut('Elegí un bloque válido.')
+        await swalErr('Bloque requerido', 'Elegí un bloque válido.')
         return
       }
 
       const rows = parseImportTextSmart(impCsv)
       if (!rows.length) {
-        setImpOut('Lista vacía o inválida. Pegá números o importá XLS/TXT.')
+        setImpOut('Lista vacía o inválida. Importá XLS/TXT o pegá lista en “Más opciones de carga”.')
+        await swalErr('Sin datos', 'Importá XLS/TXT o pegá una lista válida.')
         return
       }
 
-      // ✅ tags optativo: vacío => nombre del bloque
       const blockName = blocks.find((b) => b.id === blockIdNum)?.name?.trim() || ''
       const effectiveTags = impTags.trim() || blockName || undefined
 
@@ -784,15 +815,22 @@ export function WhatsappScreen() {
       if (!ok) {
         const msg = isRecord(j) ? getString(j, 'error') || getString(j, 'message') || 'Error' : 'Error'
         setImpOut(`Error: ${msg}`)
+        await swalErr('Error importando', msg)
         return
       }
 
       const resp = j as ImportPhonesResp
       setImpOut(JSON.stringify(resp, null, 2))
-      setImpCsv('')
+
+      // ✅ no borramos el texto si venía de XLS (por si querés reintentar), pero podés limpiar si querés
+      // setImpCsv('')
+
       setLastUpdated(new Date().toLocaleTimeString())
+      await swalOk('Importación OK', 'Números importados correctamente.')
+      bumpRefresh()
     } catch (e: unknown) {
       setImpOut(errToMessage(e))
+      await swalErr('Error importando', errToMessage(e))
     } finally {
       lockImport.current = false
     }
@@ -831,12 +869,15 @@ export function WhatsappScreen() {
         setTab('metrics')
         setLastUpdated(new Date().toLocaleTimeString())
         setRefreshKey((x) => x + 1)
+        await swalOk('Campaña creada', 'Se creó y comenzó a ejecutarse.')
         return
       }
 
       setCampMsg(resp.ok ? 'OK' : resp.error)
+      await swalErr('No se pudo crear', resp.ok ? 'Error' : resp.error)
     } catch (e: unknown) {
       setCampMsg(errToMessage(e))
+      await swalErr('Error', errToMessage(e))
     } finally {
       lockCreate.current = false
     }
@@ -848,6 +889,21 @@ export function WhatsappScreen() {
     lockAction.current = true
 
     try {
+      const confirm =
+        path === 'cancel'
+          ? await Swal.fire({
+              icon: 'warning',
+              title: '¿Cancelar campaña?',
+              text: 'La campaña se detendrá. Podés reanudar luego (si el backend lo permite).',
+              showCancelButton: true,
+              confirmButtonText: 'Sí, cancelar',
+              cancelButtonText: 'No',
+              customClass: { popup: 'swal-popup', title: 'swal-title', htmlContainer: 'swal-text' },
+            })
+          : { isConfirmed: true }
+
+      if (!confirm.isConfirmed) return
+
       setCampMsg('Procesando...')
       const r = await fetch(`${apiBase}/whapi/campaign/${selectedCampaignId}/${path}`, {
         method: 'POST',
@@ -857,8 +913,11 @@ export function WhatsappScreen() {
       setCampMsg(isRecord(j) ? JSON.stringify(j, null, 2) : 'OK')
       setLastUpdated(new Date().toLocaleTimeString())
       setRefreshKey((x) => x + 1)
+
+      await swalOk('Acción aplicada', `Se ejecutó: ${path}`)
     } catch (e: unknown) {
       setCampMsg(errToMessage(e))
+      await swalErr('Error', errToMessage(e))
     } finally {
       lockAction.current = false
     }
@@ -893,7 +952,7 @@ export function WhatsappScreen() {
           {blocksMsg ? <span className="waPill waPill--warn">{blocksMsg}</span> : null}
         </div>
 
-        <div className="waScreen__actions" style={{ justifyContent: 'flex-start', gap: 10 }}>
+        <div className="waScreen__actions waScreen__actions--head">
           <button className="waBtn" type="button" onClick={() => bumpRefresh()}>
             Actualizar
           </button>
@@ -911,6 +970,13 @@ export function WhatsappScreen() {
             Campañas
           </button>
           <button
+            className={`waTab ${tab === 'blocks' ? 'waTab--active' : ''}`}
+            onClick={() => setTab('blocks')}
+            type="button"
+          >
+            Bloques
+          </button>
+          <button
             className={`waTab ${tab === 'metrics' ? 'waTab--active' : ''}`}
             onClick={() => setTab('metrics')}
             type="button"
@@ -920,384 +986,342 @@ export function WhatsappScreen() {
         </div>
       </div>
 
-      {tab === 'test' && (
-        <>
-          <div className="waScreen__card">
-            <div className="waRow" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <span
-                className={[
-                  'waPill',
-                  uiStatus === 'idle' ? 'waPill--muted' : '',
-                  uiStatus === 'sending' ? 'waPill--muted' : '',
-                  uiStatus === 'sent' ? 'waPill--sent' : '',
-                  uiStatus === 'delivered' ? 'waPill--delivered' : '',
-                  uiStatus === 'read' ? 'waPill--read' : '',
-                  uiStatus === 'failed' ? 'waPill--failed' : '',
-                ].join(' ')}
-                title={internalId ? `ID interno: ${internalId}` : ''}
-              >
-                {uiStatus === 'idle' && 'Estado: —'}
-                {uiStatus === 'sending' && 'Enviando…'}
-                {uiStatus === 'sent' && 'Enviado'}
-                {uiStatus === 'delivered' && 'Entregado'}
-                {uiStatus === 'read' && 'Leído'}
-                {uiStatus === 'failed' && 'Error'}
-              </span>
+      <div className="waScreen__body">
+        {/* ===================== TEST ===================== */}
+        {tab === 'test' && (
+          <div className="waScreen__card waCardSplit">
+            <div className="waCardSplit__left">
+              <div className="waRow waRow--between">
+                <span
+                  className={[
+                    'waPill',
+                    uiStatus === 'idle' ? 'waPill--muted' : '',
+                    uiStatus === 'sending' ? 'waPill--muted' : '',
+                    uiStatus === 'sent' ? 'waPill--sent' : '',
+                    uiStatus === 'delivered' ? 'waPill--delivered' : '',
+                    uiStatus === 'read' ? 'waPill--read' : '',
+                    uiStatus === 'failed' ? 'waPill--failed' : '',
+                  ].join(' ')}
+                  title={internalId ? `ID interno: ${internalId}` : ''}
+                >
+                  {uiStatus === 'idle' && 'Estado: —'}
+                  {uiStatus === 'sending' && 'Enviando…'}
+                  {uiStatus === 'sent' && 'Enviado'}
+                  {uiStatus === 'delivered' && 'Entregado'}
+                  {uiStatus === 'read' && 'Leído'}
+                  {uiStatus === 'failed' && 'Error'}
+                </span>
 
-              <button className="waBtn" type="button" onClick={() => bumpRefresh()} disabled={!internalId}>
-                Actualizar estado
-              </button>
-            </div>
-
-            <label className="waScreen__field">
-              <span className="waScreen__label">Número destino</span>
-              <input
-                className="waScreen__input"
-                value={to}
-                onChange={(e) => setTo(e.target.value)}
-                placeholder="Ej: 11XXXXXXXX o 15XXXXXXXX (se arma 549...)"
-                inputMode="numeric"
-              />
-              <div className="waScreen__hint">
-                Normalizado: <b>{toNorm || '—'}</b>
+                <button className="waBtn" type="button" onClick={() => bumpRefresh()} disabled={!internalId}>
+                  Actualizar estado
+                </button>
               </div>
-            </label>
 
-            <label className="waScreen__field">
-              <span className="waScreen__label">Mensaje</span>
-              <textarea
-                className="waScreen__textarea"
-                value={body}
-                onChange={(e) => setBody(e.target.value)}
-                rows={6}
-                placeholder="Escribí el texto del mensaje…"
-              />
-            </label>
-
-            <div className="waScreen__actions">
-              <button className="waScreen__primary" type="button" onClick={() => void sendTest()} disabled={!canSendTest}>
-                Enviar prueba
-              </button>
-            </div>
-          </div>
-
-          <div className="waScreen__log">
-            <div className="waScreen__logTitle">Respuesta</div>
-            <pre className="waScreen__pre">{out || '—'}</pre>
-          </div>
-        </>
-      )}
-
-      {tab === 'campaigns' && (
-        <div className="waScreen__card">
-          <input
-            ref={impFileRef}
-            type="file"
-            accept=".txt,.csv,.list,.xls,.xlsx,text/plain,text/csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            style={{ display: 'none' }}
-            onChange={(e) => {
-              const f = e.target.files?.[0]
-              e.target.value = ''
-              if (f) void handleImpFilePicked(f)
-            }}
-          />
-
-          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
-            <div className="waSectionTitle" style={{ margin: 0 }}>
-              Importar números
-            </div>
-
-            <button className="waBtn" type="button" onClick={openImpFilePicker}>
-              Importar XLS/TXT
-            </button>
-          </div>
-
-          <div className="waGrid2">
-            <label className="waScreen__field">
-              <span className="waScreen__label">Bloque destino</span>
-              <select className="waScreen__input" value={impBlockId} onChange={(e) => setImpBlockId(e.target.value)}>
-                <option value="">— Elegir bloque —</option>
-                {blocks
-                  .filter((b) => b.id > 0)
-                  .map((b) => (
-                    <option key={b.id} value={String(b.id)}>
-                      {b.name} (ID {b.id})
-                    </option>
-                  ))}
-              </select>
-              <div className="waScreen__hint">Tip: creá/edita bloques en “Destinatarios” (igual que Email).</div>
-            </label>
-
-            <label className="waScreen__field">
-              <span className="waScreen__label">Tags (opcional)</span>
-              <input
-                className="waScreen__input"
-                value={impTags}
-                onChange={(e) => setImpTags(e.target.value)}
-                placeholder="Vacío = se usa el nombre del bloque"
-              />
-              <div className="waScreen__hint">Si lo dejás vacío, se autocompleta con el nombre del bloque.</div>
-            </label>
-
-            <label className="waScreen__field waGrid2__span2">
-              <span className="waScreen__label">Lista (una fila por línea)</span>
-              <textarea
-                className="waScreen__textarea"
-                value={impCsv}
-                onChange={(e) => setImpCsv(e.target.value)}
-                rows={6}
-                placeholder={`Ej:\n1135006833,Rios Maximina\n1561346246\n11XXXXXXX`}
-              />
-              <div className="waScreen__hint">
-                Formatos aceptados: <b>11XXXXXXXX</b>, <b>15XXXXXXXX</b>, <b>549...</b> + separadores coma/tab/;/|
-              </div>
-            </label>
-          </div>
-
-          <div className="waScreen__actions">
-            <button className="waScreen__primary" type="button" disabled={!canImport} onClick={() => void importPhones()}>
-              Importar números al bloque
-            </button>
-          </div>
-
-          <div className="waMiniLog">
-            <div className="waMiniLog__title">Salida importación</div>
-            <pre className="waMiniLog__pre">{impOut || '—'}</pre>
-          </div>
-
-          <div className="waHr" />
-
-          <div className="waSectionTitle">Crear campaña</div>
-
-          <div className="waGrid2">
-            <label className="waScreen__field">
-              <span className="waScreen__label">Nombre campaña</span>
-              <input className="waScreen__input" value={campName} onChange={(e) => setCampName(e.target.value)} />
-            </label>
-
-            <label className="waScreen__field">
-              <span className="waScreen__label">Bloque (opcional)</span>
-              <select className="waScreen__input" value={campBlockId} onChange={(e) => setCampBlockId(e.target.value)}>
-                <option value="">— Todos los bloques —</option>
-                {blocks
-                  .filter((b) => b.id > 0)
-                  .map((b) => (
-                    <option key={b.id} value={String(b.id)}>
-                      {b.name} (ID {b.id})
-                    </option>
-                  ))}
-              </select>
-            </label>
-
-            <label className="waScreen__field">
-              <span className="waScreen__label">Tags (CSV, opcional)</span>
-              <input
-                className="waScreen__input"
-                value={campTags}
-                onChange={(e) => setCampTags(e.target.value)}
-                placeholder="Ej: ventas,frio,medic"
-              />
-              <div className="waCheck">
+              <label className="waScreen__field">
+                <span className="waScreen__label">Número destino</span>
                 <input
-                  id="requireAll"
-                  type="checkbox"
-                  checked={campRequireAll}
-                  onChange={(e) => setCampRequireAll(e.target.checked)}
+                  className="waScreen__input"
+                  value={to}
+                  onChange={(e) => setTo(e.target.value)}
+                  placeholder="Ej: 11XXXXXXXX o 15XXXXXXXX (se arma 549...)"
+                  inputMode="numeric"
                 />
-                <label htmlFor="requireAll">Requerir TODOS los tags</label>
+                <div className="waScreen__hint">
+                  Normalizado: <b>{toNorm || '—'}</b>
+                </div>
+              </label>
+
+              <label className="waScreen__field">
+                <span className="waScreen__label">Mensaje</span>
+                <textarea
+                  className="waScreen__textarea"
+                  value={body}
+                  onChange={(e) => setBody(e.target.value)}
+                  rows={7}
+                  placeholder="Escribí el texto del mensaje…"
+                />
+              </label>
+
+              <div className="waScreen__actions">
+                <button className="waScreen__primary" type="button" onClick={() => void sendTest()} disabled={!canSendTest}>
+                  Enviar prueba
+                </button>
               </div>
-            </label>
-
-            <label className="waScreen__field">
-              <span className="waScreen__label">Delay entre mensajes (ms)</span>
-              <input
-                className="waScreen__input"
-                value={String(campDelayMs)}
-                onChange={(e) => setCampDelayMs(Number(e.target.value || 0))}
-                inputMode="numeric"
-              />
-            </label>
-
-            <label className="waScreen__field waGrid2__span2">
-              <span className="waScreen__label">Mensaje campaña</span>
-              <textarea
-                className="waScreen__textarea"
-                value={campBody}
-                onChange={(e) => setCampBody(e.target.value)}
-                rows={6}
-                placeholder="Texto que se enviará a todos..."
-              />
-            </label>
-          </div>
-
-          <div className="waScreen__actions">
-            <button className="waScreen__primary" type="button" disabled={!canCreate} onClick={() => void createCampaign()}>
-              Crear y ejecutar campaña
-            </button>
-            <div className="waScreen__note">
-              Requiere que los destinatarios tengan <b>phone</b> cargado. Filtra por bloque y/o tags.
-            </div>
-          </div>
-
-          <div className="waMiniLog">
-            <div className="waMiniLog__title">Salida</div>
-            <pre className="waMiniLog__pre">{campMsg || '—'}</pre>
-          </div>
-
-          <div className="waCampaignList">
-            <div className="waCampaignList__title">Últimas campañas</div>
-            <div className="waTableWrap">
-              <table className="waTable">
-                <thead>
-                  <tr>
-                    <th>Nombre</th>
-                    <th>Status</th>
-                    <th>Total</th>
-                    <th>Done</th>
-                    <th>Failed</th>
-                    <th>Delay</th>
-                    <th></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {campaigns.map((c) => (
-                    <tr key={c.id} className={selectedCampaignId === c.id ? 'isActive' : ''}>
-                      <td>{c.name}</td>
-                      <td>{c.status}</td>
-                      <td>{c.total}</td>
-                      <td>{c.doneCount}</td>
-                      <td>{c.failedCount}</td>
-                      <td>{c.delayMs}ms</td>
-                      <td>
-                        <button
-                          className="waLinkBtn"
-                          type="button"
-                          onClick={() => {
-                            setSelectedCampaignId(c.id)
-                            setTab('metrics')
-                            bumpRefresh()
-                          }}
-                        >
-                          Ver
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                  {!campaigns.length && (
-                    <tr>
-                      <td colSpan={7} style={{ opacity: 0.7 }}>
-                        — Sin campañas —
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
             </div>
 
-            <div className="waScreen__note">
-              Tip: abrí una campaña en “Ver” y mirala en la pestaña <b>Métricas</b>.
+            <div className="waCardSplit__right">
+              <div className="waScreen__logTitle">Respuesta</div>
+              <pre className="waScreen__pre">{out || '—'}</pre>
             </div>
           </div>
-        </div>
-      )}
+        )}
 
-      {tab === 'metrics' && (
-        <div className="waScreen__card">
-          {!selected ? (
-            <div className="waScreen__note">Elegí una campaña en la pestaña Campañas → “Ver”.</div>
-          ) : (
-            <>
-              <div className="waMetricsHead">
-                <div className="waMetricsHead__left">
-                  <div className="waMetricsHead__title">{selected.name}</div>
-                  <div className="waMetricsHead__sub">
-                    Status: <b>{selected.status}</b> · Total: <b>{selected.total}</b> · Done: <b>{selected.doneCount}</b>
+        {/* ===================== CAMPAIGNS ===================== */}
+        {tab === 'campaigns' && (
+          <div className="waScreen__card">
+            <div className="waSubTabs">
+              <button
+                className={`waSubTab ${campaignsSub === 'create' ? 'is-active' : ''}`}
+                type="button"
+                onClick={() => setCampaignsSub('create')}
+              >
+                Crear campañas
+              </button>
+              <button
+                className={`waSubTab ${campaignsSub === 'list' ? 'is-active' : ''}`}
+                type="button"
+                onClick={() => setCampaignsSub('list')}
+              >
+                Últimas campañas
+              </button>
+            </div>
+
+            {campaignsSub === 'create' && (
+              <>
+                <div className="waSectionTitle">Crear campaña</div>
+
+                <div className="waGrid2">
+                  <label className="waScreen__field">
+                    <span className="waScreen__label">Nombre campaña</span>
+                    <input className="waScreen__input" value={campName} onChange={(e) => setCampName(e.target.value)} />
+                  </label>
+
+                  <label className="waScreen__field">
+                    <span className="waScreen__label">Bloque (opcional)</span>
+                    <select className="waScreen__input" value={campBlockId} onChange={(e) => setCampBlockId(e.target.value)}>
+                      <option value="">— Todos los bloques —</option>
+                      {blocks
+                        .filter((b) => b.id > 0)
+                        .map((b) => (
+                          <option key={b.id} value={String(b.id)}>
+                            {b.name} (ID {b.id})
+                          </option>
+                        ))}
+                    </select>
+                  </label>
+
+                  <label className="waScreen__field">
+                    <span className="waScreen__label">Tags (CSV, opcional)</span>
+                    <input
+                      className="waScreen__input"
+                      value={campTags}
+                      onChange={(e) => setCampTags(e.target.value)}
+                      placeholder="Ej: ventas,frio,medic"
+                    />
+                    <div className="waCheck">
+                      <input
+                        id="requireAll"
+                        type="checkbox"
+                        checked={campRequireAll}
+                        onChange={(e) => setCampRequireAll(e.target.checked)}
+                      />
+                      <label htmlFor="requireAll">Requerir TODOS los tags</label>
+                    </div>
+                  </label>
+
+                  <label className="waScreen__field">
+                    <span className="waScreen__label">Delay entre mensajes (ms)</span>
+                    <input
+                      className="waScreen__input"
+                      value={String(campDelayMs)}
+                      onChange={(e) => setCampDelayMs(Number(e.target.value || 0))}
+                      inputMode="numeric"
+                    />
+                  </label>
+
+                  <label className="waScreen__field waGrid2__span2">
+                    <span className="waScreen__label">Mensaje campaña</span>
+                    <textarea
+                      className="waScreen__textarea"
+                      value={campBody}
+                      onChange={(e) => setCampBody(e.target.value)}
+                      rows={7}
+                      placeholder="Texto que se enviará a todos..."
+                    />
+                  </label>
+                </div>
+
+                <div className="waScreen__actions">
+                  <button className="waScreen__primary" type="button" disabled={!canCreate} onClick={() => void createCampaign()}>
+                    Crear y ejecutar campaña
+                  </button>
+                  <div className="waScreen__note">
+                    Filtra por bloque y/o tags. Requiere destinatarios con <b>phone</b>.
                   </div>
                 </div>
-                <div className="waMetricsHead__actions">
-                  <button className="waBtn" type="button" onClick={() => bumpRefresh()}>
-                    Actualizar
-                  </button>
-                  <button className="waBtn" type="button" onClick={() => void campaignAction('resume')}>
-                    Reanudar
-                  </button>
-                  <button className="waBtn" type="button" onClick={() => void campaignAction('resend-all')}>
-                    Reenviar toda la campaña
-                  </button>
-                  <button className="waBtn waBtn--danger" type="button" onClick={() => void campaignAction('cancel')}>
-                    Cancelar
-                  </button>
-                </div>
-              </div>
 
-              <div className="waProgress">
-                <div className="waProgress__bar">
-                  <div className="waProgress__fill" style={{ width: `${progress}%` }} />
+                <div className="waMiniLog">
+                  <div className="waMiniLog__title">Salida</div>
+                  <pre className="waMiniLog__pre">{campMsg || '—'}</pre>
                 </div>
-                <div className="waProgress__txt">{progress.toFixed(1)}%</div>
-              </div>
+              </>
+            )}
 
-              <div className="waCards">
-                <div className="waCardKpi">
-                  <div className="waCardKpi__k">Enviados</div>
-                  <div className="waCardKpi__v">{selected.sentCount}</div>
-                </div>
-                <div className="waCardKpi">
-                  <div className="waCardKpi__k">Entregados</div>
-                  <div className="waCardKpi__v">{selected.deliveredCount}</div>
-                </div>
-                <div className="waCardKpi">
-                  <div className="waCardKpi__k">Leídos</div>
-                  <div className="waCardKpi__v">{selected.readCount}</div>
-                </div>
-                <div className="waCardKpi">
-                  <div className="waCardKpi__k">Fallidos</div>
-                  <div className="waCardKpi__v">{selected.failedCount}</div>
-                </div>
-              </div>
-
-              <div className="waTableWrap">
-                <table className="waTable">
-                  <thead>
-                    <tr>
-                      <th>To</th>
-                      <th>Nombre</th>
-                      <th>Estado</th>
-                      <th>Intentos</th>
-                      <th>Error</th>
-                      <th>Actualizado</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {selected.items.map((it) => (
-                      <tr key={it.id}>
-                        <td>{it.to}</td>
-                        <td>{it.name || '—'}</td>
-                        <td>{it.status}</td>
-                        <td>{it.attempts}</td>
-                        <td className="waTdErr">{it.lastError || '—'}</td>
-                        <td>{toLocal(it.updatedAt)}</td>
-                      </tr>
-                    ))}
-                    {!selected.items.length && (
+            {campaignsSub === 'list' && (
+              <div className="waCampaignList">
+                <div className="waCampaignList__title">Últimas campañas</div>
+                <div className="waTableWrap waTableWrap--max">
+                  <table className="waTable">
+                    <thead>
                       <tr>
-                        <td colSpan={6} style={{ opacity: 0.7 }}>
-                          — Sin items aún —
-                        </td>
+                        <th>Nombre</th>
+                        <th>Status</th>
+                        <th>Total</th>
+                        <th>Done</th>
+                        <th>Failed</th>
+                        <th>Delay</th>
+                        <th></th>
                       </tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
+                    </thead>
+                    <tbody>
+                      {campaigns.map((c) => (
+                        <tr key={c.id} className={selectedCampaignId === c.id ? 'isActive' : ''}>
+                          <td>{c.name}</td>
+                          <td>{c.status}</td>
+                          <td>{c.total}</td>
+                          <td>{c.doneCount}</td>
+                          <td>{c.failedCount}</td>
+                          <td>{c.delayMs}ms</td>
+                          <td>
+                            <button
+                              className="waLinkBtn"
+                              type="button"
+                              onClick={() => {
+                                setSelectedCampaignId(c.id)
+                                setTab('metrics')
+                                bumpRefresh()
+                              }}
+                            >
+                              Ver
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                      {!campaigns.length && (
+                        <tr>
+                          <td colSpan={7} style={{ opacity: 0.7 }}>
+                            — Sin campañas —
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
 
-              <div className="waMiniLog">
-                <div className="waMiniLog__title">Salida</div>
-                <pre className="waMiniLog__pre">{campMsg || '—'}</pre>
+                <div className="waScreen__note">
+                  Tip: abrí una campaña con “Ver” y mirala en <b>Métricas</b>.
+                </div>
               </div>
-            </>
-          )}
-        </div>
-      )}
+            )}
+          </div>
+        )}
+
+        {/* ===================== BLOCKS (Destinatarios inyectado) ===================== */}
+        {tab === 'blocks' && (
+  <div className="waScreen__card">
+    <WaRecipientsPanel />
+  </div>
+)}
+
+        {/* ===================== METRICS ===================== */}
+        {tab === 'metrics' && (
+          <div className="waScreen__card">
+            {!selected ? (
+              <div className="waScreen__note">Elegí una campaña en Campañas → “Últimas campañas” → “Ver”.</div>
+            ) : (
+              <>
+                <div className="waMetricsHead">
+                  <div className="waMetricsHead__left">
+                    <div className="waMetricsHead__title">{selected.name}</div>
+                    <div className="waMetricsHead__sub">
+                      Status: <b>{selected.status}</b> · Total: <b>{selected.total}</b> · Done: <b>{selected.doneCount}</b>
+                    </div>
+                  </div>
+                  <div className="waMetricsHead__actions">
+                    <button className="waBtn" type="button" onClick={() => bumpRefresh()}>
+                      Actualizar
+                    </button>
+                    <button className="waBtn" type="button" onClick={() => void campaignAction('resume')}>
+                      Reanudar
+                    </button>
+                    <button className="waBtn" type="button" onClick={() => void campaignAction('resend-all')}>
+                      Reenviar toda la campaña
+                    </button>
+                    <button className="waBtn waBtn--danger" type="button" onClick={() => void campaignAction('cancel')}>
+                      Cancelar
+                    </button>
+                  </div>
+                </div>
+
+                <div className="waProgress">
+                  <div className="waProgress__bar">
+                    <div className="waProgress__fill" style={{ width: `${progress}%` }} />
+                  </div>
+                  <div className="waProgress__txt">{progress.toFixed(1)}%</div>
+                </div>
+
+                <div className="waCards">
+                  <div className="waCardKpi">
+                    <div className="waCardKpi__k">Enviados</div>
+                    <div className="waCardKpi__v">{selected.sentCount}</div>
+                  </div>
+                  <div className="waCardKpi">
+                    <div className="waCardKpi__k">Entregados</div>
+                    <div className="waCardKpi__v">{selected.deliveredCount}</div>
+                  </div>
+                  <div className="waCardKpi">
+                    <div className="waCardKpi__k">Leídos</div>
+                    <div className="waCardKpi__v">{selected.readCount}</div>
+                  </div>
+                  <div className="waCardKpi">
+                    <div className="waCardKpi__k">Fallidos</div>
+                    <div className="waCardKpi__v">{selected.failedCount}</div>
+                  </div>
+                </div>
+
+                <div className="waTableWrap waTableWrap--max">
+                  <table className="waTable">
+                    <thead>
+                      <tr>
+                        <th>To</th>
+                        <th>Nombre</th>
+                        <th>Estado</th>
+                        <th>Intentos</th>
+                        <th>Error</th>
+                        <th>Actualizado</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {selected.items.map((it) => (
+                        <tr key={it.id}>
+                          <td>{it.to}</td>
+                          <td>{it.name || '—'}</td>
+                          <td>{it.status}</td>
+                          <td>{it.attempts}</td>
+                          <td className="waTdErr">{it.lastError || '—'}</td>
+                          <td>{toLocal(it.updatedAt)}</td>
+                        </tr>
+                      ))}
+                      {!selected.items.length && (
+                        <tr>
+                          <td colSpan={6} style={{ opacity: 0.7 }}>
+                            — Sin items aún —
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+
+                <div className="waMiniLog">
+                  <div className="waMiniLog__title">Salida</div>
+                  <pre className="waMiniLog__pre">{campMsg || '—'}</pre>
+                </div>
+              </>
+            )}
+          </div>
+        )}
+      </div>
     </div>
   )
 }

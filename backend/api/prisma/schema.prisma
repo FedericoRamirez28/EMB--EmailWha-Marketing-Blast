@@ -16,22 +16,39 @@ model User {
   updatedAt    DateTime @updatedAt
 }
 
+enum BlockChannel {
+  whatsapp
+  email
+}
+
 model Block {
-  id        Int      @id
-  name      String
-  capacity  Int
+  // ✅ Bloques por canal (Bloque 1 existe en WA y Email)
+  channel  BlockChannel
+  id       Int
+  name     String
+  capacity Int
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@id([channel, id])
+  @@index([channel])
+}
+
+enum RecipientChannel {
+  whatsapp
+  email
 }
 
 model Recipient {
-  id      Int     @id @default(autoincrement())
+  id      Int              @id @default(autoincrement())
+  channel RecipientChannel @default(email)
+
   name    String  @default("")
-  email   String? @unique  // ✅ AHORA puede ser null
+  email   String? // email se usa en canal email
+  phone   String? // phone se usa en canal whatsapp
   tags    String  @default("")
   blockId Int     @default(0)
-
-  phone   String  @default("")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -39,9 +56,14 @@ model Recipient {
   whatsappMessages      WhatsappMessage[]
   whatsappCampaignItems WhatsappCampaignItem[]
 
-  @@index([blockId])
+  @@index([channel])
+  @@index([channel, blockId])
   @@index([email])
   @@index([phone])
+
+  // ✅ Reglas de unicidad por canal (evita choques)
+  @@unique([channel, email])
+  @@unique([channel, phone])
 }
 
 model Attachment {
@@ -88,11 +110,9 @@ model WhatsappMessage {
 
   clientRef String?
 
-  // ✅ HISTORIAL: muchos messages -> 1 item
   campaignItemId String?
   campaignItem   WhatsappCampaignItem? @relation("WaItemMessages", fields: [campaignItemId], references: [id], onDelete: SetNull)
 
-  // ✅ "LAST MESSAGE" (opuesto requerido por Prisma)
   lastForItem WhatsappCampaignItem? @relation("WaItemLastMessage")
 
   createdAt   DateTime  @default(now())
@@ -190,11 +210,9 @@ model WhatsappCampaignItem {
   lastAttemptAt DateTime?
   nextAttemptAt DateTime?
 
-  // ✅ LAST MESSAGE: 1-1 (messageId unique) + backref en WhatsappMessage.lastForItem
   messageId String?          @unique
   message   WhatsappMessage? @relation("WaItemLastMessage", fields: [messageId], references: [id], onDelete: SetNull)
 
-  // ✅ HISTORIAL: 1 item -> N messages (backref: WhatsappMessage.campaignItem)
   messages WhatsappMessage[] @relation("WaItemMessages")
 
   createdAt DateTime @default(now())

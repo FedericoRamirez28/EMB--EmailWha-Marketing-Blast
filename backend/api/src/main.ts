@@ -5,8 +5,8 @@ import { AppModule } from './app.module'
 function parseOrigins(v: string | undefined): string[] | true {
   const s = String(v ?? '').trim()
 
-  // ✅ si no hay env, permitimos todo (mejor para debug local)
-  if (!s) return true
+  // ✅ si no hay env, permitimos localhost:5173 (mejor default dev)
+  if (!s) return ['http://localhost:5173']
 
   // ✅ soporte: "*" => allow all
   if (s === '*') return true
