@@ -1,3 +1,4 @@
+// src/whapi/whapi.campaign.service.ts
 import { Injectable, Logger } from '@nestjs/common'
 import {
   Prisma,
@@ -12,7 +13,7 @@ function sleep(ms: number) {
   return new Promise<void>((r) => setTimeout(r, ms))
 }
 
-function normPhone(raw: string) {
+function normPhone(raw?: string | null) {
   return String(raw ?? '').replace(/[^\d]/g, '')
 }
 
@@ -72,13 +73,17 @@ export class WhapiCampaignService {
     requireAllTags: boolean
     delayMs: number
   }) {
+    const CHANNEL = 'whatsapp' as const
+
     const delayMs = clampInt(input.delayMs, 250, 60_000)
     const tags = splitTags(input.tags)
 
+    // ✅ SOLO recipients whatsapp
     const recs = await this.prisma.recipient.findMany({
       where: {
+        channel: CHANNEL,
         ...(typeof input.blockId === 'number' ? { blockId: input.blockId } : {}),
-        NOT: { phone: '' },
+        NOT: [{ phone: null }, { phone: '' }],
       },
       select: { id: true, name: true, phone: true, tags: true, blockId: true },
       orderBy: { id: 'asc' },
@@ -99,7 +104,7 @@ export class WhapiCampaignService {
         tags: input.tags?.trim() ? input.tags.trim() : null,
         requireAllTags: input.requireAllTags,
         delayMs,
-        maxRetries: 0, // si existe la columna, la dejamos en 0
+        maxRetries: 0,
         total: chosen.length,
         startedAt,
       },
@@ -323,11 +328,9 @@ export class WhapiCampaignService {
         })
         if (claimed.count !== 1) continue
 
-        // ✅ clientRef único por ejecución (startedAt)
         const startedKey = camp.startedAt ? new Date(camp.startedAt).getTime() : Date.now()
         const clientRef = `camp:${camp.id}:${next.id}:${startedKey}`
 
-        // 1) Crear msg; si ya existía por dedup, lo leemos
         let msgWasExisting = false
         let msg:
           | { id: string; status: WhatsappMessageStatus; whapiMessageId: string | null; error: string | null }
@@ -372,7 +375,6 @@ export class WhapiCampaignService {
           continue
         }
 
-        // 2) Si era existente y ya terminó, no reenviar
         if (msgWasExisting) {
           const alreadySent =
             msg.status === WhatsappMessageStatus.sent ||
@@ -409,7 +411,6 @@ export class WhapiCampaignService {
             continue
           }
 
-          // Si quedó “pendiente” de una corrida rara, lo cerramos como failed y marcamos item failed (sin retry)
           const reason =
             msg.status === WhatsappMessageStatus.failed ? msg.error || 'dedup_existing_failed' : 'dedup_inflight_unknown'
 
@@ -435,7 +436,6 @@ export class WhapiCampaignService {
           continue
         }
 
-        // 3) ✅ NUEVO MENSAJE: enviar inmediatamente (no inflight_dedup_wait)
         try {
           const r = await this.whapi.sendText(next.to, camp.body)
           const whapiMessageId = typeof (r as any)?.id === 'string' ? String((r as any).id) : ''

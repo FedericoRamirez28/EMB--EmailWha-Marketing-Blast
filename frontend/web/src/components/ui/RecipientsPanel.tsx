@@ -182,7 +182,7 @@ export default function RecipientsPanel({
 
   async function refreshBlocks() {
     if (!token) return
-    const got = (await recipientsApi.listBlocks(token)) as unknown
+    const got = (await recipientsApi.listBlocksEmail(token)) as unknown
 
     const finalBlocks = parseBlocks(got)
     setBlocks(finalBlocks)
@@ -520,13 +520,13 @@ export default function RecipientsPanel({
 
     const idsToDelete = Array.from(pendingDeleteIds)
     for (const id of idsToDelete) {
-      await recipientsApi.removeBlock(token, id)
+      await recipientsApi.removeBlockEmail(token, id)
     }
 
     for (const b of draftBlocks) {
       const name = normStr(b.name) || `Bloque ${b.id}`
       const capacity = clampInt(b.capacity ?? 250, 1, MAX_BLOCK_CAPACITY)
-      await recipientsApi.upsertBlock(token, { id: b.id, name, capacity })
+      await recipientsApi.upsertBlockEmail(token, { id: b.id, name, capacity })
     }
 
     setPendingDeleteIds(new Set())

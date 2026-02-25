@@ -1,3 +1,4 @@
+// src/whapi/whapi.controller.ts
 import { Body, Controller, Get, Param, Post, Query, UseGuards } from '@nestjs/common'
 import { WhatsappCampaignItemStatus, WhatsappMessageStatus } from '@prisma/client'
 import { PrismaService } from '@/prisma/prisma.service'
@@ -39,7 +40,6 @@ function msgToItemStatus(ms: WhatsappMessageStatus): WhatsappCampaignItemStatus 
 }
 
 function statusRankItem(s: WhatsappCampaignItemStatus): number {
-  // orden “progreso”
   if (s === WhatsappCampaignItemStatus.pending) return 0
   if (s === WhatsappCampaignItemStatus.sending) return 1
   if (s === WhatsappCampaignItemStatus.sent) return 2
@@ -63,13 +63,6 @@ function deriveEventString(p: AnyRecord): string {
   return ''
 }
 
-/**
- * Soporta distintos formatos de Whapi:
- * - { event: "statuses.post", data: { id, status, error? } }
- * - { statuses: [ { id, status, error? }, ... ] }
- * - { data: { statuses: [ ... ] } }
- * - { data: [ { id, status }, ... ] }
- */
 function extractStatuses(payload: unknown): Array<{ id: string; status: string; error?: string }> {
   if (!isRecord(payload)) return []
 
@@ -85,32 +78,27 @@ function extractStatuses(payload: unknown): Array<{ id: string; status: string; 
     out.push(er ? { id, status: st, error: er } : { id, status: st })
   }
 
-  // Caso viejo: event string + data objeto
   const ev = safeString(p['event'])
   if (ev === 'statuses.post' && isRecord(p['data'])) {
     pushRow(p['data'])
   }
 
-  // statuses[]
   if (Array.isArray(p['statuses'])) {
     for (const s of p['statuses'] as unknown[]) pushRow(s)
     if (out.length) return out
   }
 
-  // data.statuses[]
   const data = p['data']
   if (isRecord(data) && Array.isArray((data as AnyRecord)['statuses'])) {
     for (const s of (data as AnyRecord)['statuses'] as unknown[]) pushRow(s)
     if (out.length) return out
   }
 
-  // data como array
   if (Array.isArray(data)) {
     for (const s of data) pushRow(s)
     if (out.length) return out
   }
 
-  // data como objeto único
   if (isRecord(data)) {
     pushRow(data)
   }
@@ -155,7 +143,6 @@ export class WhapiController {
     const body = String(dto.body ?? '')
     const clientRef = dto.clientRef?.trim() ? dto.clientRef.trim() : null
 
-    // dedup por clientRef si viene
     if (clientRef) {
       const existing = await this.prisma.whatsappMessage.findFirst({
         where: { clientRef },
@@ -290,7 +277,6 @@ export class WhapiController {
     const eventStr = deriveEventString(p)
     const rows = extractStatuses(payload)
 
-    // log siempre
     await this.prisma.whatsappWebhookLog.create({
       data: {
         event: eventStr || safeString(p['event']) || null,
@@ -309,7 +295,6 @@ export class WhapiController {
       const mappedMsgStatus = mapMsgStatus(stRow.status)
       if (!mappedMsgStatus) continue
 
-      // actualiza whatsappMessage por whapiMessageId
       await this.prisma.whatsappMessage.updateMany({
         where: { whapiMessageId: messageId },
         data: {
@@ -338,22 +323,18 @@ export class WhapiController {
         if (!item) return
 
         const prev = item.status
-        // si ya está failed/skipped, no avanzar
         if (prev === WhatsappCampaignItemStatus.failed || prev === WhatsappCampaignItemStatus.skipped) return
 
         const prevRank = statusRankItem(prev)
         const nextRank = statusRankItem(mappedItem)
         if (nextRank <= prevRank) return
 
-        // update item
         await tx.whatsappCampaignItem.update({
           where: { id: item.id },
           data: { status: mappedItem },
         })
 
-        // contadores “al menos delivered/read”
         if (mappedItem === WhatsappCampaignItemStatus.delivered) {
-          // si viene delivered y antes era < delivered
           if (prevRank < statusRankItem(WhatsappCampaignItemStatus.delivered)) {
             await tx.whatsappCampaign.update({
               where: { id: item.campaignId },
@@ -363,7 +344,6 @@ export class WhapiController {
         }
 
         if (mappedItem === WhatsappCampaignItemStatus.read) {
-          // si salta directo a read sin delivered
           if (prevRank < statusRankItem(WhatsappCampaignItemStatus.delivered)) {
             await tx.whatsappCampaign.update({
               where: { id: item.campaignId },

@@ -1,3 +1,4 @@
+// src/whapi/whapi.recipients.service.ts
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common'
 import { PrismaService } from '@/prisma/prisma.service'
 
@@ -20,10 +21,15 @@ export class WhapiRecipientsService {
   constructor(private prisma: PrismaService) {}
 
   async importPhones(input: { blockId: number; tags?: string; rows: Array<{ phone: string; name?: string }> }) {
+    const CHANNEL = 'whatsapp' as const
+
     const blockId = Math.trunc(input.blockId)
     if (!Number.isFinite(blockId) || blockId <= 0) throw new BadRequestException('blockId inválido')
 
-    const block = await this.prisma.block.findUnique({ where: { id: blockId } })
+    // ✅ Block tiene PK compuesta: @@id([channel, id])
+    const block = await this.prisma.block.findUnique({
+      where: { channel_id: { channel: CHANNEL, id: blockId } },
+    })
     if (!block) throw new NotFoundException('Bloque no existe')
 
     const tags = normCsvTags(input.tags)
@@ -41,8 +47,10 @@ export class WhapiRecipientsService {
 
     if (!rows.length) throw new BadRequestException('rows vacío')
 
-    // capacidad actual del bloque
-    const currentCount = await this.prisma.recipient.count({ where: { blockId } })
+    // ✅ capacidad actual del bloque SOLO whatsapp
+    const currentCount = await this.prisma.recipient.count({
+      where: { channel: CHANNEL, blockId },
+    })
     const remaining = Math.max(0, block.capacity - currentCount)
 
     let inserted = 0
@@ -58,9 +66,9 @@ export class WhapiRecipientsService {
           continue
         }
 
-        // upsert lógico por phone (phone NO es unique)
+        // ✅ con @@unique([channel, phone]) buscamos por channel+phone
         const existing = await tx.recipient.findFirst({
-          where: { phone: r.phone },
+          where: { channel: CHANNEL, phone: r.phone },
           select: { id: true },
           orderBy: { id: 'asc' },
         })
@@ -69,10 +77,12 @@ export class WhapiRecipientsService {
           await tx.recipient.update({
             where: { id: existing.id },
             data: {
+              channel: CHANNEL,
               phone: r.phone,
               blockId,
               name: r.name ? r.name : undefined,
               tags: tags ? tags : undefined,
+              email: null, // WA no usa email
             },
           })
           updated += 1
@@ -80,14 +90,15 @@ export class WhapiRecipientsService {
           continue
         }
 
-        // Si tu schema/db exige email NOT NULL, placeholder único por phone
+        // ✅ email puede ser null (y no rompe @@unique([channel,email]) porque NULL no colisiona)
         await tx.recipient.create({
           data: {
+            channel: CHANNEL,
             phone: r.phone,
             blockId,
             name: r.name || '',
             tags: tags || '',
-            email: `${r.phone}@wa.local`,
+            email: null,
           },
         })
         inserted += 1
