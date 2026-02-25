@@ -7,37 +7,38 @@ export class RecipientsService {
   constructor(private readonly prisma: PrismaService) {}
 
   async list() {
-    // ✅ solo EMAIL: tiene email != null
+    // ✅ solo EMAIL (por canal)
     return this.prisma.recipient.findMany({
-      where: { email: { not: null } },
+      where: { channel: 'email' },
       orderBy: { id: 'desc' },
       select: {
         id: true,
         name: true,
         email: true,
         tags: true,
-        emailBlockId: true,
+        blockId: true,
         createdAt: true,
       },
     })
   }
 
   async createMany(dto: CreateManyDto) {
-    // dto.recipients[]: { name, email, tags, blockId }
     const data = dto.recipients
       .map((r) => ({
+        channel: 'email' as const,
         name: String(r.name ?? ''),
         email: String(r.email ?? '').trim() || null,
+        phone: null,
         tags: String(r.tags ?? ''),
-        emailBlockId: Number(r.blockId ?? 0),
+        blockId: Number(r.blockId ?? 0),
       }))
       .filter((x) => !!x.email)
 
     if (!data.length) return { ok: true, created: 0 }
 
-    // createMany no soporta upsert -> usamos createMany con skipDuplicates si email unique
     const res = await this.prisma.recipient.createMany({
       data,
+      // ✅ con @@unique([channel,email]) esto evita duplicados
       skipDuplicates: true,
     })
 
@@ -50,14 +51,16 @@ export class RecipientsService {
   }
 
   async bulkRemove(ids: number[]) {
-    await this.prisma.recipient.deleteMany({ where: { id: { in: ids } } })
+    await this.prisma.recipient.deleteMany({
+      where: { id: { in: ids }, channel: 'email' },
+    })
     return { ok: true }
   }
 
   async bulkMove(ids: number[], blockId: number) {
     await this.prisma.recipient.updateMany({
-      where: { id: { in: ids } },
-      data: { emailBlockId: blockId },
+      where: { id: { in: ids }, channel: 'email' },
+      data: { blockId },
     })
     return { ok: true }
   }

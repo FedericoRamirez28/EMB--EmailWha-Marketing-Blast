@@ -1,33 +1,26 @@
-import { IsArray, IsInt, IsOptional, IsString, Max, Min } from 'class-validator'
+import { IsArray, IsInt, IsOptional, IsString, ValidateNested } from 'class-validator'
+import { Type } from 'class-transformer'
 
-export type CreateRecipientRow = {
+class RecipientRowDto {
+  @IsOptional()
+  @IsString()
   name?: string
-  email: string
+
+  @IsString()
+  email!: string
+
+  @IsOptional()
+  @IsString()
   tags?: string
+
+  @IsOptional()
+  @IsInt()
   blockId?: number
 }
 
-export class CreateManyRecipientsDto {
+export class CreateManyDto {
   @IsArray()
-  rows!: CreateRecipientRow[]
-}
-
-export class BulkMoveDto {
-  @IsArray()
-  ids!: number[]
-
-  @IsInt()
-  @Min(0)
-  destBlockId!: number
-}
-
-export class BulkDeleteDto {
-  @IsArray()
-  ids!: number[]
-}
-
-export class DeleteOneParams {
-  @IsInt()
-  @Min(1)
-  id!: number
+  @ValidateNested({ each: true })
+  @Type(() => RecipientRowDto)
+  recipients!: RecipientRowDto[]
 }

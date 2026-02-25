@@ -22,8 +22,8 @@ enum BlockChannel {
 }
 
 model Block {
-  // ✅ Bloques por canal (Bloque 1 existe en WA y Email)
-  channel  BlockChannel
+  // ✅ DEFAULT para poder migrar con filas existentes
+  channel  BlockChannel @default(whatsapp)
   id       Int
   name     String
   capacity Int
@@ -45,8 +45,8 @@ model Recipient {
   channel RecipientChannel @default(email)
 
   name    String  @default("")
-  email   String? // email se usa en canal email
-  phone   String? // phone se usa en canal whatsapp
+  email   String?
+  phone   String?
   tags    String  @default("")
   blockId Int     @default(0)
 
@@ -61,7 +61,6 @@ model Recipient {
   @@index([email])
   @@index([phone])
 
-  // ✅ Reglas de unicidad por canal (evita choques)
   @@unique([channel, email])
   @@unique([channel, phone])
 }

@@ -12,14 +12,14 @@ export class WhatsappRecipientsService {
 
   async list() {
     return this.prisma.recipient.findMany({
-      where: { phone: { not: null } },
+      where: { channel: 'whatsapp' },
       orderBy: { id: 'desc' },
       select: {
         id: true,
         name: true,
         phone: true,
         tags: true,
-        whatsappBlockId: true,
+        blockId: true,
         createdAt: true,
       },
     })
@@ -28,18 +28,20 @@ export class WhatsappRecipientsService {
   async createMany(dto: CreateManyWaDto) {
     const data = dto.recipients
       .map((r) => ({
+        channel: 'whatsapp' as const,
         phone: normPhone(r.phone) || null,
+        email: null,
         name: String(r.name ?? ''),
         tags: String(r.tags ?? ''),
-        whatsappBlockId: Number(r.blockId ?? 0),
+        blockId: Number(r.blockId ?? 0),
       }))
       .filter((x) => !!x.phone)
 
     if (!data.length) return { ok: true, created: 0 }
 
-    // phone es unique (nullable). usamos createMany + skipDuplicates
     const res = await this.prisma.recipient.createMany({
       data,
+      // ✅ con @@unique([channel,phone]) evita duplicados
       skipDuplicates: true,
     })
 
@@ -52,14 +54,16 @@ export class WhatsappRecipientsService {
   }
 
   async bulkRemove(ids: number[]) {
-    await this.prisma.recipient.deleteMany({ where: { id: { in: ids } } })
+    await this.prisma.recipient.deleteMany({
+      where: { id: { in: ids }, channel: 'whatsapp' },
+    })
     return { ok: true }
   }
 
   async bulkMove(ids: number[], blockId: number) {
     await this.prisma.recipient.updateMany({
-      where: { id: { in: ids } },
-      data: { whatsappBlockId: blockId },
+      where: { id: { in: ids }, channel: 'whatsapp' },
+      data: { blockId },
     })
     return { ok: true }
   }

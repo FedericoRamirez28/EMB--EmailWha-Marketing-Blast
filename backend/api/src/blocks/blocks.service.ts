@@ -17,7 +17,6 @@ export class BlocksService {
       orderBy: { id: 'asc' },
     })
 
-    // ✅ garantía: si está vacío, crea Bloque 1 en ese canal
     if (!blocks.length) {
       await this.prisma.block.createMany({
         data: DEFAULT_BLOCKS[channel].map((b) => ({ ...b, channel })),
@@ -32,17 +31,17 @@ export class BlocksService {
     const channel = (dto.channel ?? forceChannel) as BlockChannel
 
     return this.prisma.block.upsert({
-      where: { id_channel: { id: dto.id, channel } },
+      // ✅ IMPORTANTE: con @@id([channel,id]) el where compuesto se llama channel_id
+      where: { channel_id: { channel, id: dto.id } },
       update: { name: dto.name, capacity: dto.capacity },
       create: { id: dto.id, channel, name: dto.name, capacity: dto.capacity },
     })
   }
 
   async remove(id: number, channel: BlockChannel) {
-    // ✅ borra por PK compuesta
     await this.prisma.block
       .delete({
-        where: { id_channel: { id, channel } },
+        where: { channel_id: { channel, id } },
       })
       .catch(() => null)
 
