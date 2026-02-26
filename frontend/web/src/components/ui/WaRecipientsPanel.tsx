@@ -4,8 +4,7 @@ import Fuse from 'fuse.js'
 import Swal from 'sweetalert2'
 import * as XLSX from 'xlsx'
 import { useAuth } from '@/auth/useAuth'
-import { waRecipientsApi, type WaRecipient } from '@/lib/waRecipientsApi'
-import type { BlockCfg } from '@/lib/recipientsApi'
+import { waRecipientsApi, type WaRecipient, type BlockCfg } from '@/lib/waRecipientsApi'
 
 const MAX_BLOCK_CAPACITY = 2000
 
@@ -30,15 +29,6 @@ function normName(raw: unknown): string {
   return safeStr(raw).replace(/\s+/g, ' ').trim()
 }
 
-/**
- * Normaliza teléfonos AR:
- * - 549... => ok
- * - 54...  => agrega 9
- * - 11XXXXXXXX => 54911XXXXXXXX
- * - 15XXXXXXXX => 54911XXXXXXXX (15 -> 11)
- * - XXXXXXXX (8 dígitos) => 54911 + XXXXXXXX (default área 11)
- * - 011... => quita 0 inicial
- */
 function normalizeArPhone(raw: unknown, defaultArea = '11'): string {
   let s = onlyDigits(raw)
   if (s.startsWith('0')) s = s.replace(/^0+/, '')
@@ -66,7 +56,6 @@ function normalizeArPhone(raw: unknown, defaultArea = '11'): string {
   return s
 }
 
-/** TXT pegado: separadores tab, coma, ;, | */
 function parseImportTextSmart(text: string): Array<{ phone: string; name?: string }> {
   const lines = safeStr(text)
     .split(/\r?\n/g)
@@ -103,7 +92,7 @@ function parseImportTextSmart(text: string): Array<{ phone: string; name?: strin
     }
 
     const phone = normalizeArPhone(phoneRaw)
-    if (!phone) continue
+    if (!phone || phone.length < 10) continue
 
     const name = normName(nameRaw)
     out.push(name ? { phone, name } : { phone })
@@ -112,29 +101,24 @@ function parseImportTextSmart(text: string): Array<{ phone: string; name?: strin
   return out
 }
 
-/** XLS/XLSX: Col A nombre, Col B número (o viceversa). */
 async function parseImportXlsx(file: File): Promise<Array<{ phone: string; name?: string }>> {
   const buf = await file.arrayBuffer()
   const wb = XLSX.read(buf, { type: 'array' })
   const sheetName = wb.SheetNames?.[0]
   if (!sheetName) return []
 
-  const sheetsUnknown: unknown = (wb as unknown as { Sheets?: unknown }).Sheets
-  if (!sheetsUnknown || typeof sheetsUnknown !== 'object') return []
+  const ws = wb.Sheets?.[sheetName]
+  if (!ws) return []
 
-  const wsUnknown: unknown = (sheetsUnknown as Record<string, unknown>)[sheetName]
-  if (!wsUnknown || typeof wsUnknown !== 'object') return []
-
-  const ws = wsUnknown as XLSX.WorkSheet
-
-  const rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true }) as unknown[]
+  const rows: unknown[] = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true })
   const out: Array<{ phone: string; name?: string }> = []
 
   for (const row of rows) {
     if (!Array.isArray(row) || row.length === 0) continue
 
-    const c0 = row[0]
-    const c1 = row[1]
+    const r = row as unknown[]
+    const c0 = r[0]
+    const c1 = r[1]
 
     const d0 = onlyDigits(c0)
     const d1 = onlyDigits(c1)
@@ -157,7 +141,7 @@ async function parseImportXlsx(file: File): Promise<Array<{ phone: string; name?
     }
 
     const phone = normalizeArPhone(phoneRaw)
-    if (!phone) continue
+    if (!phone || phone.length < 10) continue
 
     const name = normName(nameRaw)
     out.push(name ? { phone, name } : { phone })
@@ -166,12 +150,21 @@ async function parseImportXlsx(file: File): Promise<Array<{ phone: string; name?
   return out
 }
 
+function displayBlockName(name: string): string {
+  const s = String(name ?? '').trim()
+  return s.startsWith('wa:') ? s.slice(3).trim() : s
+}
+
+const FALLBACK_BLOCKS: BlockCfg[] = [
+  { id: 1, name: 'Bloque 1', capacity: 250 },
+  { id: 0, name: 'Sin bloque', capacity: 999999 },
+]
+
 export default function WaRecipientsPanel() {
   const { token } = useAuth()
-
   const fileInputRef = useRef<HTMLInputElement | null>(null)
 
-  const [blocks, setBlocks] = useState<BlockCfg[]>([])
+  const [blocks, setBlocks] = useState<BlockCfg[]>(FALLBACK_BLOCKS)
   const [draftBlocks, setDraftBlocks] = useState<BlockCfg[]>([])
   const [blocksModalOpen, setBlocksModalOpen] = useState(false)
   const [pendingDeleteIds, setPendingDeleteIds] = useState<Set<number>>(new Set())
@@ -183,8 +176,7 @@ export default function WaRecipientsPanel() {
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
   const [moveTo, setMoveTo] = useState<number | ''>('')
 
-  // Import principal (XLS/TXT) => textarea preview
-  const [impCsv, setImpCsv] = useState('')
+  // Import: destino y tags
   const [impTags, setImpTags] = useState('')
   const [insertBlockId, setInsertBlockId] = useState<number>(0) // 0 = bloque actual
 
@@ -204,40 +196,116 @@ export default function WaRecipientsPanel() {
 
   async function refreshBlocks() {
     if (!token) return
-    const got = await waRecipientsApi.listBlocks(token)
+    try {
+      const got = await waRecipientsApi.listBlocks(token)
 
-    // asegurar 0 "Sin bloque"
-    const sorted = [...got]
-      .filter((b) => typeof b.id === 'number')
-      .sort((a, b) => a.id - b.id)
+      const byId = new Map<number, BlockCfg>()
+      for (const b of got) {
+        if (typeof b?.id !== 'number') continue
+        byId.set(b.id, { ...b, name: displayBlockName(b.name) })
+      }
 
-    const hasZero = sorted.some((b) => b.id === 0)
-    const finalBlocks = hasZero ? sorted : [...sorted, { id: 0, name: 'Sin bloque', capacity: 999999 }]
+      const sorted = [...byId.values()].sort((a, b) => a.id - b.id)
+      const hasZero = sorted.some((b) => b.id === 0)
+      const finalBlocks = hasZero ? sorted : [...sorted, { id: 0, name: 'Sin bloque', capacity: 999999 }]
 
-    setBlocks(finalBlocks)
+      setBlocks(finalBlocks.length ? finalBlocks : FALLBACK_BLOCKS)
 
-    setActiveBlockId((prev) => {
-      const exists = finalBlocks.some((b) => b.id === prev)
-      if (exists) return prev
-      return finalBlocks.find((b) => b.id !== 0)?.id ?? 1
-    })
+      setActiveBlockId((prev) => {
+        const exists = finalBlocks.some((b) => b.id === prev)
+        if (exists) return prev
+        return finalBlocks.find((b) => b.id !== 0)?.id ?? 1
+      })
+    } catch (e: unknown) {
+      setBlocks(FALLBACK_BLOCKS)
+      await Swal.fire({ icon: 'error', title: 'Error cargando bloques', text: e instanceof Error ? e.message : String(e) })
+    }
   }
 
   async function refreshRecipients() {
     if (!token) return
-    const got = await waRecipientsApi.listWaRecipients(token)
-    setList(got)
+    try {
+      const got = await waRecipientsApi.listWaRecipients(token)
+      setList(got)
+    } catch (e: unknown) {
+      setList([])
+      await Swal.fire({
+        icon: 'error',
+        title: 'Error cargando destinatarios',
+        text: e instanceof Error ? e.message : String(e),
+      })
+    }
+  }
+
+  function resolveInsertBlockId(): number {
+    return insertBlockId !== 0 ? insertBlockId : activeBlockId
+  }
+
+  async function importRowsNow(fileName: string, rows: Array<{ phone: string; name?: string }>) {
+    if (!token) return
+
+    const blockId = resolveInsertBlockId()
+    const blockName = blocks.find((b) => b.id === blockId)?.name?.trim() || ''
+    const effectiveTags = impTags.trim() || blockName || undefined
+
+    await Swal.fire({
+      icon: 'info',
+      title: 'Importando...',
+      html: `Archivo: <b>${fileName}</b> · Registros: <b>${rows.length}</b>`,
+      allowOutsideClick: false,
+      allowEscapeKey: false,
+      didOpen: () => Swal.showLoading(),
+    })
+
+    try {
+      const res = await waRecipientsApi.importPhones(token, { blockId, tags: effectiveTags, rows })
+      await refreshRecipients()
+
+      await Swal.fire({
+        icon: 'success',
+        title: 'Importación OK',
+        text: `Insertados: ${res.inserted} · Actualizados: ${res.updated} · Saltados: ${res.skipped}`,
+      })
+    } catch (e: unknown) {
+      await Swal.fire({
+        icon: 'error',
+        title: 'Error importando',
+        text: e instanceof Error ? e.message : String(e),
+      })
+    }
+  }
+
+  function openFilePicker() {
+    fileInputRef.current?.click()
+  }
+
+  async function handleFilePicked(file: File) {
+    const ext = (file.name.split('.').pop() || '').toLowerCase()
+
+    try {
+      let rows: Array<{ phone: string; name?: string }> = []
+      if (ext === 'xls' || ext === 'xlsx') rows = await parseImportXlsx(file)
+      else rows = parseImportTextSmart(await file.text())
+
+      if (!rows.length) {
+        await Swal.fire({ icon: 'warning', title: 'Sin datos', text: 'No se detectaron teléfonos válidos.' })
+        return
+      }
+
+      // ✅ IMPORT AUTO (sin botón extra)
+      await importRowsNow(file.name, rows)
+    } catch (e: unknown) {
+      await Swal.fire({ icon: 'error', title: 'Error', text: e instanceof Error ? e.message : String(e) })
+    }
   }
 
   const fuse = useMemo(() => new Fuse(list, { keys: ['name', 'phone', 'tags'], threshold: 0.35 }), [list])
+  const filteredAll = useMemo(() => (query ? fuse.search(query).map((r) => r.item) : list), [query, fuse, list])
 
-  const filteredAll = useMemo(() => {
-    return query ? fuse.search(query).map((r) => r.item) : list
-  }, [query, fuse, list])
-
-  const tabItems = useMemo(() => {
-    return filteredAll.filter((r) => (activeBlockId === 0 ? r.blockId === 0 : r.blockId === activeBlockId))
-  }, [filteredAll, activeBlockId])
+  const tabItems = useMemo(
+    () => filteredAll.filter((r) => (activeBlockId === 0 ? r.blockId === 0 : r.blockId === activeBlockId)),
+    [filteredAll, activeBlockId],
+  )
 
   const countByBlock = useMemo(() => {
     const map = new Map<number, number>()
@@ -247,7 +315,7 @@ export default function WaRecipientsPanel() {
   }, [filteredAll])
 
   const activeCfg = useMemo(() => {
-    return blocks.find((b) => b.id === activeBlockId) ?? blocks[0] ?? { id: 1, name: 'Bloque 1', capacity: 250 }
+    return blocks.find((b) => b.id === activeBlockId) ?? blocks[0] ?? FALLBACK_BLOCKS[0]
   }, [blocks, activeBlockId])
 
   const selectedInTab = useMemo(() => tabItems.filter((r) => selectedIds.has(r.id)), [tabItems, selectedIds])
@@ -279,84 +347,11 @@ export default function WaRecipientsPanel() {
     setSelectedIds(new Set())
   }
 
-  function resolveInsertBlockId(): number {
-    return insertBlockId !== 0 ? insertBlockId : activeBlockId
-  }
-
-  function openFilePicker() {
-    fileInputRef.current?.click()
-  }
-
-  async function handleFilePicked(file: File) {
-    if (!token) return
-
-    const ext = (file.name.split('.').pop() || '').toLowerCase()
-    let rows: Array<{ phone: string; name?: string }> = []
-
-    try {
-      if (ext === 'xls' || ext === 'xlsx') {
-        rows = await parseImportXlsx(file)
-      } else {
-        // TXT
-        const raw = await file.text()
-        rows = parseImportTextSmart(raw)
-      }
-    } catch (e: unknown) {
-      await Swal.fire({ icon: 'error', title: 'Error', text: e instanceof Error ? e.message : String(e) })
-      return
-    }
-
-    if (!rows.length) {
-      await Swal.fire({ icon: 'warning', title: 'Sin datos', text: 'No se detectaron teléfonos válidos.' })
-      return
-    }
-
-    const asText = rows.map((r) => (r.name ? `${r.phone},${r.name}` : r.phone)).join('\n')
-    setImpCsv(asText)
-    await Swal.fire({
-      icon: 'success',
-      title: 'Listo',
-      text: `Detectados ${rows.length} registros. Ahora tocá “Importar números al bloque”.`,
-      timer: 1600,
-      showConfirmButton: false,
-    })
-  }
-
-  async function importNowFromImpCsv() {
-    if (!token) return
-
-    const blockId = resolveInsertBlockId()
-    const rows = parseImportTextSmart(impCsv)
-
-    if (!rows.length) {
-      await Swal.fire({ icon: 'warning', title: 'Lista vacía', text: 'Pegá números o importá XLS/TXT.' })
-      return
-    }
-
-    // tags optativo: vacío => nombre del bloque
-    const blockName = blocks.find((b) => b.id === blockId)?.name?.trim() || ''
-    const effectiveTags = impTags.trim() || blockName || undefined
-
-    await waRecipientsApi.addWaRecipients(
-      token,
-      rows.map((r) => ({ phone: r.phone, name: r.name, tags: effectiveTags, blockId })),
-    )
-
-    await refreshRecipients()
-    setImpCsv('')
-
-    await Swal.fire({
-      icon: 'success',
-      title: 'Importación OK',
-      text: `Importados ${rows.length} al bloque "${blocks.find((b) => b.id === blockId)?.name ?? blockId}".`,
-    })
-  }
-
   async function confirmPasteImport() {
     if (!token) return
-    const blockId = resolveInsertBlockId()
-    const rows = parseImportTextSmart(pasteText)
 
+    const blockId = resolveInsertBlockId()
+    const rows = parseImportTextSmart(pasteText).filter((r) => (r.phone || '').length >= 10)
     if (!rows.length) {
       await Swal.fire({ icon: 'warning', title: 'Sin datos', text: 'No se detectaron teléfonos válidos.' })
       return
@@ -365,19 +360,34 @@ export default function WaRecipientsPanel() {
     const blockName = blocks.find((b) => b.id === blockId)?.name?.trim() || ''
     const effectiveTags = impTags.trim() || blockName || undefined
 
-    await waRecipientsApi.addWaRecipients(
-      token,
-      rows.map((r) => ({ phone: r.phone, name: r.name, tags: effectiveTags, blockId })),
-    )
-    await refreshRecipients()
-    setPasteText('')
-    setMoreOpen(false)
+    await Swal.fire({
+      icon: 'info',
+      title: 'Importando...',
+      html: `Registros: <b>${rows.length}</b>`,
+      allowOutsideClick: false,
+      allowEscapeKey: false,
+      didOpen: () => Swal.showLoading(),
+    })
 
-    await Swal.fire({ icon: 'success', title: 'Importados', text: `Importados: ${rows.length}.` })
+    try {
+      const res = await waRecipientsApi.importPhones(token, { blockId, tags: effectiveTags, rows })
+      await refreshRecipients()
+      setPasteText('')
+      setMoreOpen(false)
+
+      await Swal.fire({
+        icon: 'success',
+        title: 'Importación OK',
+        text: `Insertados: ${res.inserted} · Actualizados: ${res.updated} · Saltados: ${res.skipped}`,
+      })
+    } catch (e: unknown) {
+      await Swal.fire({ icon: 'error', title: 'Error importando', text: e instanceof Error ? e.message : String(e) })
+    }
   }
 
   async function removeOne(id: number) {
     if (!token) return
+
     const r = await Swal.fire({
       icon: 'warning',
       title: 'Eliminar destinatario',
@@ -388,13 +398,17 @@ export default function WaRecipientsPanel() {
     })
     if (!r.isConfirmed) return
 
-    await waRecipientsApi.removeWaRecipient(token, id)
-    await refreshRecipients()
-    setSelectedIds((prev) => {
-      const n = new Set(prev)
-      n.delete(id)
-      return n
-    })
+    try {
+      await waRecipientsApi.removeWaRecipient(token, id)
+      await refreshRecipients()
+      setSelectedIds((prev) => {
+        const n = new Set(prev)
+        n.delete(id)
+        return n
+      })
+    } catch (e: unknown) {
+      await Swal.fire({ icon: 'error', title: 'Error', text: e instanceof Error ? e.message : String(e) })
+    }
   }
 
   async function removeSelectedInTab() {
@@ -415,11 +429,14 @@ export default function WaRecipientsPanel() {
     })
     if (!r.isConfirmed) return
 
-    await waRecipientsApi.bulkRemoveWaRecipients(token, ids)
-    await refreshRecipients()
-    clearSelection()
-
-    await Swal.fire({ icon: 'success', title: 'Eliminados', text: `Eliminados: ${ids.length}.` })
+    try {
+      await waRecipientsApi.bulkRemoveWaRecipients(token, ids)
+      await refreshRecipients()
+      clearSelection()
+      await Swal.fire({ icon: 'success', title: 'Eliminados', text: `Eliminados: ${ids.length}.` })
+    } catch (e: unknown) {
+      await Swal.fire({ icon: 'error', title: 'Error', text: e instanceof Error ? e.message : String(e) })
+    }
   }
 
   async function moveSelected() {
@@ -458,18 +475,20 @@ export default function WaRecipientsPanel() {
       }
     }
 
-    await waRecipientsApi.bulkMoveWaRecipients(token, ids, dest)
-    await refreshRecipients()
-    clearSelection()
-    setMoveTo('')
-
-    await Swal.fire({ icon: 'success', title: 'Movidos', text: `Movidos ${ids.length} a "${destCfg.name}".` })
+    try {
+      await waRecipientsApi.bulkMoveWaRecipients(token, ids, dest)
+      await refreshRecipients()
+      clearSelection()
+      setMoveTo('')
+      await Swal.fire({ icon: 'success', title: 'Movidos', text: `Movidos ${ids.length} a "${destCfg.name}".` })
+    } catch (e: unknown) {
+      await Swal.fire({ icon: 'error', title: 'Error', text: e instanceof Error ? e.message : String(e) })
+    }
   }
 
-  // ===== Blocks modal =====
   function openBlocksModal() {
     const editable = blocks.filter((b) => b.id !== 0)
-    setDraftBlocks(editable.length ? editable : [])
+    setDraftBlocks(editable.length ? editable : [{ id: 1, name: 'Bloque 1', capacity: 250 }])
     setPendingDeleteIds(new Set())
     setBlocksModalOpen(true)
   }
@@ -509,22 +528,24 @@ export default function WaRecipientsPanel() {
       return
     }
 
-    const idsToDelete = Array.from(pendingDeleteIds)
-    for (const id of idsToDelete) {
-      await waRecipientsApi.removeBlock(token, id)
+    try {
+      const idsToDelete = Array.from(pendingDeleteIds)
+      for (const id of idsToDelete) await waRecipientsApi.removeBlock(token, id)
+
+      for (const b of draftBlocks) {
+        const name = safeStr(b.name).trim() || `Bloque ${b.id}`
+        const capacity = clampInt(Number(b.capacity ?? 250), 1, MAX_BLOCK_CAPACITY)
+        await waRecipientsApi.upsertBlock(token, { id: b.id, name, capacity })
+      }
+
+      setPendingDeleteIds(new Set())
+      await refreshBlocks()
+      closeBlocksModal()
+
+      await Swal.fire({ icon: 'success', title: 'Guardado', text: 'Bloques actualizados.' })
+    } catch (e: unknown) {
+      await Swal.fire({ icon: 'error', title: 'Error guardando', text: e instanceof Error ? e.message : String(e) })
     }
-
-    for (const b of draftBlocks) {
-      const name = safeStr(b.name).trim() || `Bloque ${b.id}`
-      const capacity = clampInt(Number(b.capacity ?? 250), 1, MAX_BLOCK_CAPACITY)
-      await waRecipientsApi.upsertBlock(token, { id: b.id, name, capacity })
-    }
-
-    setPendingDeleteIds(new Set())
-    await refreshBlocks()
-    closeBlocksModal()
-
-    await Swal.fire({ icon: 'success', title: 'Guardado', text: 'Bloques actualizados.' })
   }
 
   return (
@@ -580,7 +601,6 @@ export default function WaRecipientsPanel() {
         }}
       />
 
-      {/* Chips bloques */}
       <div className="wrp__blocksChips">
         {blocks.map((b) => {
           const isActive = b.id === activeBlockId
@@ -605,9 +625,9 @@ export default function WaRecipientsPanel() {
         })}
       </div>
 
-      {/* Import principal */}
+      {/* ✅ Sin botón “Importar números al bloque”: el XLS/TXT importa automáticamente */}
+
       <div className="wrp__importRow">
-        {/* Collapsible en flow normal (empuja para abajo) */}
         <div className={`wrp__more ${moreOpen ? 'is-open' : ''}`}>
           <button
             className="btn btn--ghost"
@@ -655,10 +675,8 @@ export default function WaRecipientsPanel() {
             </div>
           </div>
         </div>
-         <button className="btn btn--primary" type="button" onClick={() => void importNowFromImpCsv()} disabled={!impCsv.trim()}>
-          Importar números al bloque
-        </button>
       </div>
+
       <div className="wrp__toolbar">
         <div className="wrp__search">
           <label className="label">Buscar</label>
@@ -730,7 +748,7 @@ export default function WaRecipientsPanel() {
                   <input type="checkbox" checked={selectedIds.has(r.id)} onChange={() => toggle(r.id)} />
                 </td>
                 <td>{r.name || '—'}</td>
-                <td>{r.phone}</td>
+                <td>{r.phone || '—'}</td>
                 <td>
                   <span className="badge">{r.tags || '—'}</span>
                 </td>
@@ -757,7 +775,6 @@ export default function WaRecipientsPanel() {
         Total: {list.length} · Filtrados: {filteredAll.length} · Seleccionados totales: {selectedIds.size}
       </p>
 
-      {/* ===== Modal Configurar Bloques ===== */}
       {blocksModalOpen && (
         <div className="wrp__modalOverlay" role="dialog" aria-modal="true">
           <div className="wrp__modalCard card">

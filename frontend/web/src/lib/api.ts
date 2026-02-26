@@ -1,7 +1,5 @@
+// src/lib/api.ts
 const API_URL = (import.meta.env.VITE_API_URL as string) || 'http://localhost:3001'
-
-type JsonPrimitive = string | number | boolean | null
-type JsonValue = JsonPrimitive | JsonValue[] | { [k: string]: JsonValue }
 
 function isObject(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null
@@ -13,24 +11,24 @@ function joinUrl(base: string, path: string) {
   return `${b}${p.startsWith('/') ? '' : '/'}${p}`
 }
 
-async function parseJsonSafe(res: Response): Promise<JsonValue | null> {
+async function parseJsonSafe(res: Response): Promise<unknown> {
   const ct = res.headers.get('content-type') || ''
   if (!ct.includes('application/json')) return null
   try {
-    return (await res.json()) as JsonValue
+    return await res.json()
   } catch {
     return null
   }
 }
 
-function errorMessageFromPayload(payload: JsonValue | null, status: number): string {
+function errorMessageFromPayload(payload: unknown, status: number): string {
   if (!payload || !isObject(payload)) return `HTTP ${status}`
 
-  const msg = (payload as Record<string, unknown>).message
+  const msg = payload.message
   if (typeof msg === 'string') return msg
   if (Array.isArray(msg) && msg.every((x) => typeof x === 'string')) return msg.join(' | ')
 
-  const err = (payload as Record<string, unknown>).error
+  const err = payload.error
   if (typeof err === 'string') return err
 
   return `HTTP ${status}`
@@ -39,20 +37,16 @@ function errorMessageFromPayload(payload: JsonValue | null, status: number): str
 async function request<T>(
   method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE',
   path: string,
-  body?: JsonValue,
+  body?: unknown,
   token?: string | null,
 ): Promise<T> {
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-  }
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' }
   if (token) headers.Authorization = `Bearer ${token}`
 
   const res = await fetch(joinUrl(API_URL, path), {
     method,
     headers,
     body: body !== undefined ? JSON.stringify(body) : undefined,
-    // ✅ si en el futuro usás cookies/sesión
-    // credentials: 'include',
   })
 
   const payload = await parseJsonSafe(res)
@@ -61,16 +55,14 @@ async function request<T>(
     throw new Error(errorMessageFromPayload(payload, res.status))
   }
 
-  // endpoints sin body (204 o no-json)
   if (payload === null) return undefined as unknown as T
-
-  return payload as unknown as T
+  return payload as T
 }
 
 export const api = {
   get: <T>(path: string, token?: string | null) => request<T>('GET', path, undefined, token),
-  post: <T>(path: string, body: JsonValue, token?: string | null) => request<T>('POST', path, body, token),
-  put: <T>(path: string, body: JsonValue, token?: string | null) => request<T>('PUT', path, body, token),
-  patch: <T>(path: string, body: JsonValue, token?: string | null) => request<T>('PATCH', path, body, token),
+  post: <T>(path: string, body: unknown, token?: string | null) => request<T>('POST', path, body, token),
+  put: <T>(path: string, body: unknown, token?: string | null) => request<T>('PUT', path, body, token),
+  patch: <T>(path: string, body: unknown, token?: string | null) => request<T>('PATCH', path, body, token),
   del: <T>(path: string, token?: string | null) => request<T>('DELETE', path, undefined, token),
 }

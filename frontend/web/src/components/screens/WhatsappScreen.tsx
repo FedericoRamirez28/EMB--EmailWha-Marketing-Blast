@@ -188,8 +188,9 @@ async function parseImportXlsx(file: File): Promise<Array<{ phone: string; name?
   for (const row of rows) {
     if (!Array.isArray(row) || row.length === 0) continue
 
-    const c0 = row[0]
-    const c1 = row[1]
+    const r = row as unknown[]
+    const c0 = r[0]
+    const c1 = r[1]
 
     const d0 = onlyDigits(c0)
     const d1 = onlyDigits(c1)
@@ -306,9 +307,6 @@ type TabKey = 'test' | 'campaigns' | 'blocks' | 'metrics'
 type CampaignsSubTab = 'create' | 'list'
 
 type BlockCfg = { id: number; name: string; capacity: number }
-type ImportPhonesResp =
-  | { ok: true; inserted: number; updated: number; skipped: number }
-  | { ok: false; error: string }
 
 /* =========================
    Parsers
@@ -507,8 +505,6 @@ export function WhatsappScreen() {
   const [refreshKey, setRefreshKey] = useState(0)
   const [lastUpdated, setLastUpdated] = useState<string>('—')
 
-  const [showMoreLoad, setShowMoreLoad] = useState(false)
-
   function bumpRefresh(): void {
     setRefreshKey((x) => x + 1)
   }
@@ -525,46 +521,6 @@ export function WhatsappScreen() {
   const [blocks, setBlocks] = useState<BlockCfg[]>([])
   const [blocksMsg, setBlocksMsg] = useState<string>('')
 
-  // ===== IMPORT PHONES =====
-  const [impBlockId, setImpBlockId] = useState<string>('')
-  const [impTags, setImpTags] = useState<string>('')
-  const [impCsv, setImpCsv] = useState<string>('') // para “pegar lista” (acordeón)
-  const [impOut, setImpOut] = useState<string>('')
-
-  const impFileRef = useRef<HTMLInputElement | null>(null)
-  function openImpFilePicker() {
-    impFileRef.current?.click()
-  }
-
-  async function handleImpFilePicked(file: File) {
-    setImpOut('Leyendo archivo...')
-    try {
-      const ext = (file.name.split('.').pop() || '').toLowerCase()
-
-      let rows: Array<{ phone: string; name?: string }> = []
-      if (ext === 'xls' || ext === 'xlsx') {
-        rows = await parseImportXlsx(file)
-      } else {
-        const raw = await file.text()
-        rows = parseImportTextSmart(raw)
-      }
-
-      if (!rows.length) {
-        setImpOut('No se detectaron teléfonos válidos en el archivo.')
-        return
-      }
-
-      // dejamos un preview “oculto” sólo para import (no obligatorio mostrarlo)
-      const asText = rows.map((r) => (r.name ? `${r.phone},${r.name}` : r.phone)).join('\n')
-      setImpCsv(asText)
-      setImpOut(`OK: detectados ${rows.length} registros. Listo para importar.`)
-      await swalOk('Archivo listo', `Detecté ${rows.length} registros. Ahora elegí el bloque y “Importar”.`)
-    } catch (e: unknown) {
-      setImpOut(errToMessage(e))
-      await swalErr('Error leyendo archivo', errToMessage(e))
-    }
-  }
-
   // ===== CAMPAIGNS =====
   const [campName, setCampName] = useState('Campaña WhatsApp')
   const [campBody, setCampBody] = useState('')
@@ -580,7 +536,6 @@ export function WhatsappScreen() {
 
   // ===== locks =====
   const lockSend = useRef(false)
-  const lockImport = useRef(false)
   const lockCreate = useRef(false)
   const lockAction = useRef(false)
 
@@ -773,69 +728,6 @@ export function WhatsappScreen() {
     }
   }
 
-  async function importPhones(): Promise<void> {
-    if (lockImport.current) return
-    lockImport.current = true
-
-    setImpOut('Importando...')
-    try {
-      if (!token) {
-        setImpOut('Error: no hay token. Iniciá sesión.')
-        await swalErr('Sin sesión', 'Iniciá sesión para importar.')
-        return
-      }
-
-      const blockIdNum = Number(impBlockId)
-      if (!Number.isFinite(blockIdNum) || blockIdNum <= 0) {
-        setImpOut('Elegí un bloque válido.')
-        await swalErr('Bloque requerido', 'Elegí un bloque válido.')
-        return
-      }
-
-      const rows = parseImportTextSmart(impCsv)
-      if (!rows.length) {
-        setImpOut('Lista vacía o inválida. Importá XLS/TXT o pegá lista en “Más opciones de carga”.')
-        await swalErr('Sin datos', 'Importá XLS/TXT o pegá una lista válida.')
-        return
-      }
-
-      const blockName = blocks.find((b) => b.id === blockIdNum)?.name?.trim() || ''
-      const effectiveTags = impTags.trim() || blockName || undefined
-
-      const payload = { blockId: blockIdNum, tags: effectiveTags, rows }
-
-      const r = await fetch(`${apiBase}/whapi/recipients/import-phones`, {
-        method: 'POST',
-        headers: authHeaders(token),
-        body: JSON.stringify(payload),
-      })
-
-      const j: unknown = await r.json().catch(() => null)
-      const ok = isRecord(j) && getBool(j, 'ok') === true
-      if (!ok) {
-        const msg = isRecord(j) ? getString(j, 'error') || getString(j, 'message') || 'Error' : 'Error'
-        setImpOut(`Error: ${msg}`)
-        await swalErr('Error importando', msg)
-        return
-      }
-
-      const resp = j as ImportPhonesResp
-      setImpOut(JSON.stringify(resp, null, 2))
-
-      // ✅ no borramos el texto si venía de XLS (por si querés reintentar), pero podés limpiar si querés
-      // setImpCsv('')
-
-      setLastUpdated(new Date().toLocaleTimeString())
-      await swalOk('Importación OK', 'Números importados correctamente.')
-      bumpRefresh()
-    } catch (e: unknown) {
-      setImpOut(errToMessage(e))
-      await swalErr('Error importando', errToMessage(e))
-    } finally {
-      lockImport.current = false
-    }
-  }
-
   async function createCampaign(): Promise<void> {
     if (lockCreate.current) return
     lockCreate.current = true
@@ -930,7 +822,6 @@ export function WhatsappScreen() {
   }
 
   const canSendTest = Boolean(configured && toNorm && body.trim() && uiStatus !== 'sending')
-  const canImport = Boolean(configured && impBlockId && impCsv.trim() && token)
   const canCreate = Boolean(configured && campBody.trim())
 
   const effectiveDetail = selectedCampaignId ? campaignDetail : null
@@ -1218,10 +1109,10 @@ export function WhatsappScreen() {
 
         {/* ===================== BLOCKS (Destinatarios inyectado) ===================== */}
         {tab === 'blocks' && (
-  <div className="waScreen__card">
-    <WaRecipientsPanel />
-  </div>
-)}
+          <div className="waScreen__card">
+            <WaRecipientsPanel />
+          </div>
+        )}
 
         {/* ===================== METRICS ===================== */}
         {tab === 'metrics' && (
