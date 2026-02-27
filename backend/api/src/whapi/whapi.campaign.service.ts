@@ -438,7 +438,10 @@ export class WhapiCampaignService {
 
         try {
           const r = await this.whapi.sendText(next.to, camp.body)
-          const whapiMessageId = typeof (r as any)?.id === 'string' ? String((r as any).id) : ''
+          
+          // ✅ ACÁ ESTÁ EL ARREGLO: Buscamos el ID adentro de "message" primero
+          const rawId = (r as any)?.message?.id || (r as any)?.id
+          const whapiMessageId = typeof rawId === 'string' ? rawId : ''
 
           await this.prisma.$transaction(async (tx) => {
             await tx.whatsappMessage.update({
