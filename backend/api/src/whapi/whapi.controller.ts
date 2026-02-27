@@ -8,6 +8,7 @@ import { WhapiService } from './whapi.service'
 import { SendTextDto } from './dto/send-text.dto'
 import { CreateCampaignDto } from './dto/campaign.dto'
 import { WhapiCampaignService } from './whapi.campaign.service'
+import { WhapiAutoReplyService } from './whapi.autoreply.service'
 
 type AnyRecord = Record<string, unknown>
 
@@ -96,6 +97,7 @@ function extractStatuses(payload: unknown): Array<{ id: string; status: string; 
   }
 
   if (Array.isArray(p['messages'])) {
+    // ojo: messages[] suele ser inbound, pero por si trae status también
     for (const s of p['messages'] as unknown[]) pushRow(s)
     if (out.length) return out
   }
@@ -134,6 +136,7 @@ export class WhapiController {
     private readonly whapi: WhapiService,
     private readonly prisma: PrismaService,
     private readonly campaigns: WhapiCampaignService,
+    private readonly bot: WhapiAutoReplyService,
   ) {}
 
   @UseGuards(JwtGuard)
@@ -156,6 +159,21 @@ export class WhapiController {
       const error = e instanceof Error ? e.message : 'limits failed'
       return { ok: false, error }
     }
+  }
+
+  // ✅ BOT CONFIG (para UI)
+  @UseGuards(JwtGuard)
+  @Get('bot-config')
+  async getBotConfig() {
+    const data = await this.bot.getConfig()
+    return { ok: true, data }
+  }
+
+  @UseGuards(JwtGuard)
+  @Post('bot-config')
+  async updateBotConfig(@Body() patch: any) {
+    const data = await this.bot.updateConfig(patch || {})
+    return { ok: true, data }
   }
 
   @UseGuards(JwtGuard)
@@ -331,93 +349,101 @@ export class WhapiController {
       })
       .catch(() => undefined)
 
-    if (!rows.length) return { ok: true }
+    // ✅ 1) Procesar statuses (delivered/read/failed)
+    if (rows.length) {
+      const now = new Date()
+      const touchedCampaignIds = new Set<string>()
 
-    const now = new Date()
-    const touchedCampaignIds = new Set<string>()
+      for (const stRow of rows) {
+        const whapiMsgId = stRow.id
+        const mappedMsgStatus = mapMsgStatus(stRow.status)
+        if (!mappedMsgStatus) continue
 
-    for (const stRow of rows) {
-      const whapiMsgId = stRow.id
-      const mappedMsgStatus = mapMsgStatus(stRow.status)
-      if (!mappedMsgStatus) continue
-
-      await this.prisma.whatsappMessage.updateMany({
-        where: { whapiMessageId: whapiMsgId },
-        data: {
-          status: mappedMsgStatus,
-          deliveredAt: mappedMsgStatus === WhatsappMessageStatus.delivered ? now : undefined,
-          readAt: mappedMsgStatus === WhatsappMessageStatus.read ? now : undefined,
-          error: mappedMsgStatus === WhatsappMessageStatus.failed ? (stRow.error || 'failed') : null,
-        },
-      })
-
-      const msg = await this.prisma.whatsappMessage.findFirst({
-        where: { whapiMessageId: whapiMsgId },
-        select: { campaignItemId: true },
-      })
-      if (!msg?.campaignItemId) continue
-
-      const itemId = msg.campaignItemId
-      const mappedItem = msgToItemStatus(mappedMsgStatus)
-      if (!mappedItem) continue
-
-      const updated = await this.prisma.$transaction(async (tx) => {
-        const item = await tx.whatsappCampaignItem.findUnique({
-          where: { id: itemId },
-          select: { id: true, campaignId: true, status: true },
+        await this.prisma.whatsappMessage.updateMany({
+          where: { whapiMessageId: whapiMsgId },
+          data: {
+            status: mappedMsgStatus,
+            deliveredAt: mappedMsgStatus === WhatsappMessageStatus.delivered ? now : undefined,
+            readAt: mappedMsgStatus === WhatsappMessageStatus.read ? now : undefined,
+            error: mappedMsgStatus === WhatsappMessageStatus.failed ? (stRow.error || 'failed') : null,
+          },
         })
-        if (!item) return { campaignId: null as string | null }
 
-        const prev = item.status
-        if (prev === WhatsappCampaignItemStatus.failed || prev === WhatsappCampaignItemStatus.skipped) {
+        const msg = await this.prisma.whatsappMessage.findFirst({
+          where: { whapiMessageId: whapiMsgId },
+          select: { campaignItemId: true },
+        })
+        if (!msg?.campaignItemId) continue
+
+        const itemId = msg.campaignItemId
+        const mappedItem = msgToItemStatus(mappedMsgStatus)
+        if (!mappedItem) continue
+
+        const updated = await this.prisma.$transaction(async (tx) => {
+          const item = await tx.whatsappCampaignItem.findUnique({
+            where: { id: itemId },
+            select: { id: true, campaignId: true, status: true },
+          })
+          if (!item) return { campaignId: null as string | null }
+
+          const prev = item.status
+          if (prev === WhatsappCampaignItemStatus.failed || prev === WhatsappCampaignItemStatus.skipped) {
+            return { campaignId: item.campaignId }
+          }
+
+          const prevRank = statusRankItem(prev)
+          const nextRank = statusRankItem(mappedItem)
+          if (nextRank <= prevRank) return { campaignId: item.campaignId }
+
+          await tx.whatsappCampaignItem.update({
+            where: { id: item.id },
+            data: { status: mappedItem, updatedAt: now, lastError: mappedItem === WhatsappCampaignItemStatus.failed ? (stRow.error || 'failed') : null },
+          })
+
           return { campaignId: item.campaignId }
-        }
-
-        const prevRank = statusRankItem(prev)
-        const nextRank = statusRankItem(mappedItem)
-        if (nextRank <= prevRank) return { campaignId: item.campaignId }
-
-        await tx.whatsappCampaignItem.update({
-          where: { id: item.id },
-          data: { status: mappedItem, updatedAt: now, lastError: mappedItem === WhatsappCampaignItemStatus.failed ? (stRow.error || 'failed') : null },
         })
 
-        return { campaignId: item.campaignId }
-      })
+        if (updated.campaignId) touchedCampaignIds.add(updated.campaignId)
+      }
 
-      if (updated.campaignId) touchedCampaignIds.add(updated.campaignId)
+      for (const campaignId of touchedCampaignIds) {
+        const agg = await this.prisma.whatsappCampaignItem.groupBy({
+          by: ['status'],
+          where: { campaignId },
+          _count: { _all: true },
+        })
+
+        const count = (s: WhatsappCampaignItemStatus) => agg.find((a) => a.status === s)?._count._all ?? 0
+        const total = await this.prisma.whatsappCampaignItem.count({ where: { campaignId } })
+        const pending = count(WhatsappCampaignItemStatus.pending) + count(WhatsappCampaignItemStatus.sending)
+        const doneCount = Math.max(0, total - pending)
+
+        const sent = count(WhatsappCampaignItemStatus.sent)
+        const delivered = count(WhatsappCampaignItemStatus.delivered)
+        const read = count(WhatsappCampaignItemStatus.read)
+        const failed = count(WhatsappCampaignItemStatus.failed)
+        const skipped = count(WhatsappCampaignItemStatus.skipped)
+
+        await this.prisma.whatsappCampaign.update({
+          where: { id: campaignId },
+          data: {
+            total,
+            doneCount,
+            sentCount: sent + delivered + read,
+            deliveredCount: delivered + read,
+            readCount: read,
+            failedCount: failed,
+            skippedCount: skipped,
+          },
+        })
+      }
     }
 
-    for (const campaignId of touchedCampaignIds) {
-      const agg = await this.prisma.whatsappCampaignItem.groupBy({
-        by: ['status'],
-        where: { campaignId },
-        _count: { _all: true },
-      })
-
-      const count = (s: WhatsappCampaignItemStatus) => agg.find((a) => a.status === s)?._count._all ?? 0
-      const total = await this.prisma.whatsappCampaignItem.count({ where: { campaignId } })
-      const pending = count(WhatsappCampaignItemStatus.pending) + count(WhatsappCampaignItemStatus.sending)
-      const doneCount = Math.max(0, total - pending)
-
-      const sent = count(WhatsappCampaignItemStatus.sent)
-      const delivered = count(WhatsappCampaignItemStatus.delivered)
-      const read = count(WhatsappCampaignItemStatus.read)
-      const failed = count(WhatsappCampaignItemStatus.failed)
-      const skipped = count(WhatsappCampaignItemStatus.skipped)
-
-      await this.prisma.whatsappCampaign.update({
-        where: { id: campaignId },
-        data: {
-          total,
-          doneCount,
-          sentCount: sent + delivered + read,
-          deliveredCount: delivered + read,
-          readCount: read,
-          failedCount: failed,
-          skippedCount: skipped,
-        },
-      })
+    // ✅ 2) Procesar inbound + auto-reply (messages.post)
+    try {
+      await this.bot.handleIncomingWebhook(payload)
+    } catch {
+      // nunca tirar error al webhook
     }
 
     return { ok: true }

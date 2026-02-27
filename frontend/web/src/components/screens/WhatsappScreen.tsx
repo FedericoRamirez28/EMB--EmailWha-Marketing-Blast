@@ -3,6 +3,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react'
 import Swal from 'sweetalert2'
 import { useAuth } from '@/auth/useAuth'
 import WaRecipientsPanel from '@/components/ui/WaRecipientsPanel'
+import WaBotPanel from '@/components/ui/WaBotPanel'
 import { attachmentsApi, type Attachment } from '@/lib/attachmentApi'
 
 function getApiBase(): string {
@@ -70,7 +71,8 @@ type CampaignDetail = CampaignDetailOk | CampaignDetailErr
 type CreateCampaignResp = { ok: true; id: string } | { ok: false; error: string }
 type ListCampaignsResp = { ok: true; data: CampaignRow[] } | { ok: false; error: string }
 
-type TabKey = 'campaigns' | 'blocks' | 'metrics'
+// ✅ NUEVO: tab bot
+type TabKey = 'campaigns' | 'blocks' | 'metrics' | 'bot'
 type CampaignsSubTab = 'create' | 'list'
 type BlockCfg = { id: number; name: string; capacity: number }
 
@@ -188,7 +190,6 @@ export function WhatsappScreen() {
   const [attachments, setAttachments] = useState<Attachment[]>([])
   const uploadInputRef = useRef<HTMLInputElement | null>(null)
 
-  // Create campaign fields
   const [campName, setCampName] = useState('Campaña WhatsApp')
   const [campBody, setCampBody] = useState('')
   const [campTags, setCampTags] = useState('')
@@ -200,7 +201,7 @@ export function WhatsappScreen() {
   const [campAttachmentId, setCampAttachmentId] = useState<string>('')
 
   const [scheduleEnabled, setScheduleEnabled] = useState(false)
-  const [scheduledLocal, setScheduledLocal] = useState('') // datetime-local
+  const [scheduledLocal, setScheduledLocal] = useState('')
 
   const [campaigns, setCampaigns] = useState<CampaignRow[]>([])
   const [selectedCampaignId, setSelectedCampaignId] = useState<string | null>(null)
@@ -209,7 +210,6 @@ export function WhatsappScreen() {
   const lockCreate = useRef(false)
   const lockAction = useRef(false)
 
-  // Health
   useEffect(() => {
     let alive = true
     const run = async () => {
@@ -227,7 +227,6 @@ export function WhatsappScreen() {
     return () => { alive = false }
   }, [apiBase, token])
 
-  // Blocks
   useEffect(() => {
     if (tab !== 'campaigns' && tab !== 'blocks') return
     let alive = true
@@ -248,7 +247,6 @@ export function WhatsappScreen() {
     return () => { alive = false }
   }, [apiBase, token, tab, refreshKey])
 
-  // Attachments
   useEffect(() => {
     if (!token) return
     if (tab !== 'campaigns') return
@@ -267,7 +265,6 @@ export function WhatsappScreen() {
     return () => { alive = false }
   }, [token, tab, refreshKey])
 
-  // Campaigns list
   useEffect(() => {
     if (tab !== 'campaigns' && tab !== 'metrics') return
     let alive = true
@@ -286,7 +283,6 @@ export function WhatsappScreen() {
     return () => { alive = false }
   }, [apiBase, token, tab, refreshKey])
 
-  // Campaign detail
   useEffect(() => {
     if (tab !== 'metrics') return
     if (!selectedCampaignId) return
@@ -340,7 +336,7 @@ export function WhatsappScreen() {
     if (!scheduleEnabled) return undefined
     const s = String(scheduledLocal || '').trim()
     if (!s) return undefined
-    const d = new Date(s) // local
+    const d = new Date(s)
     if (Number.isNaN(d.getTime())) return undefined
     return d.toISOString()
   }
@@ -443,10 +439,12 @@ export function WhatsappScreen() {
           <button className={`waTab ${tab === 'campaigns' ? 'waTab--active' : ''}`} onClick={() => setTab('campaigns')} type="button">Campañas</button>
           <button className={`waTab ${tab === 'blocks' ? 'waTab--active' : ''}`} onClick={() => setTab('blocks')} type="button">Bloques</button>
           <button className={`waTab ${tab === 'metrics' ? 'waTab--active' : ''}`} onClick={() => setTab('metrics')} type="button">Métricas</button>
+          <button className={`waTab ${tab === 'bot' ? 'waTab--active' : ''}`} onClick={() => setTab('bot')} type="button">Bot</button>
         </div>
       </div>
 
       <div className="waScreen__body">
+        {/* CAMPAIGNS */}
         {tab === 'campaigns' && (
           <div className="waScreen__card">
             <div className="waSubTabs">
@@ -616,12 +614,14 @@ export function WhatsappScreen() {
           </div>
         )}
 
+        {/* BLOCKS */}
         {tab === 'blocks' && (
           <div className="waScreen__card">
             <WaRecipientsPanel />
           </div>
         )}
 
+        {/* METRICS */}
         {tab === 'metrics' && (
           <div className="waScreen__card waMetricsDashboard">
             {!selected ? (
@@ -724,6 +724,11 @@ export function WhatsappScreen() {
               </>
             )}
           </div>
+        )}
+
+        {/* BOT */}
+        {tab === 'bot' && (
+          <WaBotPanel />
         )}
       </div>
     </div>

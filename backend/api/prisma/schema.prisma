@@ -82,6 +82,12 @@ model Setting {
   @@map("settings")
 }
 
+/**
+ * =========================
+ * WhatsApp
+ * =========================
+ */
+
 enum WhatsappMessageStatus {
   pending
   sent
@@ -133,6 +139,32 @@ model WhatsappWebhookLog {
   @@index([messageId])
 }
 
+/**
+ * ✅ NUEVO: inbound messages (dedupe + auditoría + link a campaña)
+ */
+model WhatsappInboundMessage {
+  id            String   @id @default(cuid())
+  whapiMessageId String  @unique
+  from          String
+  chatId        String?
+  type          String?
+  body          String?
+  fromMe        Boolean  @default(false)
+  payload       Json
+  createdAt     DateTime @default(now())
+
+  campaignId    String?
+  campaign      WhatsappCampaign? @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+
+  campaignItemId String?
+  campaignItem   WhatsappCampaignItem? @relation(fields: [campaignItemId], references: [id], onDelete: SetNull)
+
+  @@index([from])
+  @@index([createdAt])
+  @@index([campaignId])
+  @@index([campaignItemId])
+}
+
 enum WhatsappCampaignStatus {
   draft
   running
@@ -172,12 +204,10 @@ model WhatsappCampaign {
   delayMs    Int     @default(2500)
   maxRetries Int     @default(2)
 
-  // ✅ NUEVO
   mediaType    WhatsappCampaignMediaType @default(text)
   attachmentId Int?
   attachment   Attachment? @relation(fields: [attachmentId], references: [id], onDelete: SetNull)
 
-  // ✅ NUEVO (programación)
   scheduledAt DateTime?
 
   total          Int @default(0)
@@ -188,6 +218,10 @@ model WhatsappCampaign {
   failedCount    Int @default(0)
   skippedCount   Int @default(0)
 
+  // ✅ NUEVO (ventas / bot)
+  repliedCount     Int @default(0) // cantidad de destinatarios que respondieron al menos 1 vez
+  autoRepliedCount Int @default(0) // cantidad de auto-respuestas enviadas
+
   startedAt  DateTime?
   finishedAt DateTime?
 
@@ -195,6 +229,7 @@ model WhatsappCampaign {
   updatedAt DateTime @updatedAt
 
   items WhatsappCampaignItem[]
+  inboundMessages WhatsappInboundMessage[]
 
   @@index([status])
   @@index([createdAt])
@@ -225,6 +260,15 @@ model WhatsappCampaignItem {
 
   messages WhatsappMessage[] @relation("WaItemMessages")
 
+  // ✅ NUEVO (ventas / bot)
+  replyCount       Int      @default(0)
+  firstReplyAt     DateTime?
+  lastReplyAt      DateTime?
+  autoReplyCount   Int      @default(0)
+  lastAutoReplyAt  DateTime?
+
+  inboundMessages WhatsappInboundMessage[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -232,4 +276,5 @@ model WhatsappCampaignItem {
   @@index([status])
   @@index([to])
   @@index([nextAttemptAt])
+  @@index([firstReplyAt])
 }
