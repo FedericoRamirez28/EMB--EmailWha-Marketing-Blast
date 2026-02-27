@@ -248,12 +248,14 @@ export default function WaRecipientsPanel() {
     const blockName = blocks.find((b) => b.id === blockId)?.name?.trim() || ''
     const effectiveTags = impTags.trim() || blockName || undefined
 
-    await Swal.fire({
+    // ACÁ AGREGAMOS EL "void" PARA ESLINT
+    void Swal.fire({
       icon: 'info',
       title: 'Importando...',
       html: `Archivo: <b>${fileName}</b> · Registros: <b>${rows.length}</b>`,
       allowOutsideClick: false,
       allowEscapeKey: false,
+      showConfirmButton: false,
       didOpen: () => Swal.showLoading(),
     })
 
@@ -292,7 +294,6 @@ export default function WaRecipientsPanel() {
         return
       }
 
-      // ✅ IMPORT AUTO (sin botón extra)
       await importRowsNow(file.name, rows)
     } catch (e: unknown) {
       await Swal.fire({ icon: 'error', title: 'Error', text: e instanceof Error ? e.message : String(e) })
@@ -360,12 +361,14 @@ export default function WaRecipientsPanel() {
     const blockName = blocks.find((b) => b.id === blockId)?.name?.trim() || ''
     const effectiveTags = impTags.trim() || blockName || undefined
 
-    await Swal.fire({
+    // ACÁ AGREGAMOS EL "void" PARA ESLINT
+    void Swal.fire({
       icon: 'info',
       title: 'Importando...',
       html: `Registros: <b>${rows.length}</b>`,
       allowOutsideClick: false,
       allowEscapeKey: false,
+      showConfirmButton: false,
       didOpen: () => Swal.showLoading(),
     })
 
@@ -624,8 +627,6 @@ export default function WaRecipientsPanel() {
           )
         })}
       </div>
-
-      {/* ✅ Sin botón “Importar números al bloque”: el XLS/TXT importa automáticamente */}
 
       <div className="wrp__importRow">
         <div className={`wrp__more ${moreOpen ? 'is-open' : ''}`}>
