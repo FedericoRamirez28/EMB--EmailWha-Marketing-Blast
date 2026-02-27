@@ -1,9 +1,16 @@
 import { Injectable } from '@nestjs/common'
 
-export type WhapiSendTextResponse = {
+export type WhapiSendResponse = {
   id?: string
   message?: unknown
   [k: string]: unknown
+}
+
+type SendMediaArgs = {
+  toRaw: string
+  mediaUrl: string
+  caption?: string
+  filename?: string
 }
 
 @Injectable()
@@ -70,7 +77,7 @@ export class WhapiService {
     return data
   }
 
-  async sendText(toRaw: string, body: string): Promise<WhapiSendTextResponse> {
+  async sendText(toRaw: string, body: string): Promise<WhapiSendResponse> {
     const to = this.normPhone(toRaw)
 
     const { res, data } = await this.fetchJson(
@@ -91,6 +98,91 @@ export class WhapiService {
       throw new Error(`Whapi sendText failed: ${res.status} ${msg}`)
     }
 
-    return data as WhapiSendTextResponse
+    return data as WhapiSendResponse
+  }
+
+  async sendImage(args: SendMediaArgs): Promise<WhapiSendResponse> {
+    const to = this.normPhone(args.toRaw)
+
+    const { res, data } = await this.fetchJson(
+      '/messages/image',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${this.token}`,
+        },
+        body: JSON.stringify({
+          to,
+          media: args.mediaUrl,
+          caption: args.caption || '',
+        }),
+      },
+      30000,
+    )
+
+    if (!res.ok) {
+      const msg = (data as any)?.message || JSON.stringify(data)
+      throw new Error(`Whapi sendImage failed: ${res.status} ${msg}`)
+    }
+
+    return data as WhapiSendResponse
+  }
+
+  async sendVideo(args: SendMediaArgs): Promise<WhapiSendResponse> {
+    const to = this.normPhone(args.toRaw)
+
+    const { res, data } = await this.fetchJson(
+      '/messages/video',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${this.token}`,
+        },
+        body: JSON.stringify({
+          to,
+          media: args.mediaUrl,
+          caption: args.caption || '',
+        }),
+      },
+      60000,
+    )
+
+    if (!res.ok) {
+      const msg = (data as any)?.message || JSON.stringify(data)
+      throw new Error(`Whapi sendVideo failed: ${res.status} ${msg}`)
+    }
+
+    return data as WhapiSendResponse
+  }
+
+  async sendDocument(args: SendMediaArgs): Promise<WhapiSendResponse> {
+    const to = this.normPhone(args.toRaw)
+
+    const { res, data } = await this.fetchJson(
+      '/messages/document',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${this.token}`,
+        },
+        body: JSON.stringify({
+          to,
+          media: args.mediaUrl,
+          caption: args.caption || '',
+          filename: args.filename || 'documento.pdf',
+        }),
+      },
+      60000,
+    )
+
+    if (!res.ok) {
+      const msg = (data as any)?.message || JSON.stringify(data)
+      throw new Error(`Whapi sendDocument failed: ${res.status} ${msg}`)
+    }
+
+    return data as WhapiSendResponse
   }
 }

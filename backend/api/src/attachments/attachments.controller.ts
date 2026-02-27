@@ -2,9 +2,11 @@ import {
   Controller,
   Delete,
   Get,
+  HttpCode,
   Param,
   ParseIntPipe,
   Post,
+  Query,
   Res,
   UseGuards,
   UseInterceptors,
@@ -17,6 +19,7 @@ import fs from 'node:fs'
 import type { Response } from 'express'
 import { AttachmentsService } from './attachments.service'
 import { JwtGuard } from '@/auth/jwt.guard'
+import { Public } from '@/auth/public.decorator'
 
 const UPLOADS_DIR = path.join(process.cwd(), 'uploads')
 
@@ -48,7 +51,8 @@ export class AttachmentsController {
           cb(null, `${base}_${uniq}${ext}`)
         },
       }),
-      limits: { fileSize: 20 * 1024 * 1024 },
+      // ✅ subimos a 50MB para videos
+      limits: { fileSize: 50 * 1024 * 1024 },
     }),
   )
   add(@UploadedFiles() files: Express.Multer.File[]) {
@@ -64,5 +68,31 @@ export class AttachmentsController {
   async download(@Param('id', ParseIntPipe) id: number, @Res() res: Response) {
     const { row, fullpath } = await this.service.getFilePath(id)
     return res.download(fullpath, row.originalName)
+  }
+
+  /**
+   * ✅ PUBLIC: descarga firmada (Whapi puede acceder)
+   * URL: /attachments/:id/public?exp=...&sig=...
+   */
+  @Public()
+  @Get(':id/public')
+  @HttpCode(200)
+  async publicDownload(
+    @Param('id', ParseIntPipe) id: number,
+    @Query('exp') exp: string,
+    @Query('sig') sig: string,
+    @Query('dl') dl: string | undefined,
+    @Res() res: Response,
+  ) {
+    this.service.verifyPublicSignature(id, exp, sig)
+
+    const { row, fullpath } = await this.service.getFilePath(id)
+
+    res.setHeader('Content-Type', row.mimeType || 'application/octet-stream')
+    const isDownload = String(dl ?? '').trim() === '1'
+    const disp = isDownload ? 'attachment' : 'inline'
+    res.setHeader('Content-Disposition', `${disp}; filename="${row.originalName}"`)
+
+    return res.sendFile(fullpath)
   }
 }

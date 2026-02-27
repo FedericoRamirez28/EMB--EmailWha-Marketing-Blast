@@ -1,13 +1,15 @@
 // src/whapi/whapi.campaign.service.ts
-import { Injectable, Logger } from '@nestjs/common'
+import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common'
 import {
   Prisma,
   WhatsappCampaignItemStatus,
+  WhatsappCampaignMediaType,
   WhatsappCampaignStatus,
   WhatsappMessageStatus,
 } from '@prisma/client'
 import { PrismaService } from '@/prisma/prisma.service'
 import { WhapiService } from './whapi.service'
+import { AttachmentsService } from '@/attachments/attachments.service'
 
 function sleep(ms: number) {
   return new Promise<void>((r) => setTimeout(r, ms))
@@ -50,33 +52,118 @@ async function chunked<T>(arr: T[], size: number, fn: (chunk: T[]) => Promise<vo
   }
 }
 
+type MediaCache = {
+  url: string
+  expMs: number
+  filename: string
+}
+
 @Injectable()
-export class WhapiCampaignService {
+export class WhapiCampaignService implements OnModuleInit, OnModuleDestroy {
   private running = false
+  private scheduleLock = false
+  private scheduler: NodeJS.Timeout | null = null
   private readonly log = new Logger(WhapiCampaignService.name)
+
+  // cache de URL firmada por campaña (para no regenerar 2000 veces)
+  private mediaCache = new Map<string, MediaCache>()
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly whapi: WhapiService,
+    private readonly attachments: AttachmentsService,
   ) {}
 
+  onModuleInit() {
+    // ✅ activa campañas programadas cada 5s
+    this.scheduler = setInterval(() => {
+      void this.activateScheduled()
+    }, 5000)
+  }
+
+  onModuleDestroy() {
+    if (this.scheduler) clearInterval(this.scheduler)
+  }
+
+  private async activateScheduled() {
+    if (this.scheduleLock) return
+    this.scheduleLock = true
+    try {
+      const now = new Date()
+
+      const due = await this.prisma.whatsappCampaign.findMany({
+        where: {
+          status: WhatsappCampaignStatus.draft,
+          scheduledAt: { not: null, lte: now },
+        },
+        take: 20,
+        orderBy: { scheduledAt: 'asc' },
+        select: { id: true },
+      })
+
+      if (!due.length) return
+
+      for (const c of due) {
+        const startedAt = new Date()
+        await this.prisma.whatsappCampaign.update({
+          where: { id: c.id },
+          data: {
+            status: WhatsappCampaignStatus.running,
+            startedAt,
+            finishedAt: null,
+          },
+        })
+
+        await this.prisma.whatsappCampaignItem.updateMany({
+          where: {
+            campaignId: c.id,
+            status: WhatsappCampaignItemStatus.pending,
+          },
+          data: {
+            nextAttemptAt: startedAt,
+          },
+        })
+      }
+
+      void this.kick()
+    } catch (e: unknown) {
+      this.log.warn(`activateScheduled error: ${e instanceof Error ? e.message : String(e)}`)
+    } finally {
+      this.scheduleLock = false
+    }
+  }
+
   /**
-   * ✅ Crea campaña y la ejecuta.
-   * - NO hay reintentos automáticos
-   * - Cada destinatario se procesa 1 vez (sent o failed)
+   * ✅ Crea campaña y:
+   * - si scheduledAt futuro => queda DRAFT y se ejecuta sola al llegar la hora
+   * - si no => RUNNING y arranca ya
    */
   async createCampaignAndStart(input: {
     name: string
-    body: string
+    body?: string
     blockId?: number
     tags?: string
     requireAllTags: boolean
     delayMs: number
+    mediaType: WhatsappCampaignMediaType
+    attachmentId?: number
+    scheduledAt?: Date | null
   }) {
     const CHANNEL = 'whatsapp' as const
 
     const delayMs = clampInt(input.delayMs, 250, 60_000)
     const tags = splitTags(input.tags)
+
+    const mediaType = input.mediaType ?? WhatsappCampaignMediaType.text
+    const body = String(input.body ?? '')
+
+    if (mediaType === WhatsappCampaignMediaType.text && !body.trim()) {
+      return { ok: false, error: 'body_required' }
+    }
+
+    if (mediaType !== WhatsappCampaignMediaType.text && !(typeof input.attachmentId === 'number' && input.attachmentId > 0)) {
+      return { ok: false, error: 'attachment_required' }
+    }
 
     // ✅ SOLO recipients whatsapp
     const recs = await this.prisma.recipient.findMany({
@@ -93,23 +180,31 @@ export class WhapiCampaignService {
       ? recs.filter((r) => recipientHasTags(r.tags || '', tags, input.requireAllTags))
       : recs
 
-    const startedAt = new Date()
+    const now = new Date()
+    const scheduledAt = input.scheduledAt ?? null
+    const isScheduled = Boolean(scheduledAt && scheduledAt.getTime() > now.getTime() + 5000)
 
     const camp = await this.prisma.whatsappCampaign.create({
       data: {
         name: input.name || 'Campaña WhatsApp',
-        status: WhatsappCampaignStatus.running,
-        body: input.body,
+        status: isScheduled ? WhatsappCampaignStatus.draft : WhatsappCampaignStatus.running,
+        body,
         blockId: typeof input.blockId === 'number' ? input.blockId : null,
         tags: input.tags?.trim() ? input.tags.trim() : null,
         requireAllTags: input.requireAllTags,
         delayMs,
         maxRetries: 0,
         total: chosen.length,
-        startedAt,
+        scheduledAt: isScheduled ? scheduledAt : null,
+        startedAt: isScheduled ? null : now,
+
+        mediaType,
+        attachmentId: typeof input.attachmentId === 'number' ? input.attachmentId : null,
       },
-      select: { id: true },
+      select: { id: true, scheduledAt: true, status: true },
     })
+
+    const firstAttemptAt = isScheduled ? (scheduledAt as Date) : now
 
     if (chosen.length) {
       await this.prisma.whatsappCampaignItem.createMany({
@@ -121,13 +216,13 @@ export class WhapiCampaignService {
           tagsSnap: r.tags || null,
           blockIdSnap: r.blockId ?? null,
           status: r.phone ? WhatsappCampaignItemStatus.pending : WhatsappCampaignItemStatus.skipped,
-          nextAttemptAt: r.phone ? new Date() : null,
+          nextAttemptAt: r.phone ? firstAttemptAt : null,
           attempts: 0,
         })),
       })
     }
 
-    void this.kick()
+    if (!isScheduled) void this.kick()
     return { ok: true, id: camp.id }
   }
 
@@ -141,7 +236,7 @@ export class WhapiCampaignService {
 
     await this.prisma.whatsappCampaign.update({
       where: { id },
-      data: { status: WhatsappCampaignStatus.running, finishedAt: null },
+      data: { status: WhatsappCampaignStatus.running, finishedAt: null, startedAt: camp.startedAt ?? new Date() },
     })
 
     void this.kick()
@@ -156,12 +251,6 @@ export class WhapiCampaignService {
     return { ok: true }
   }
 
-  /**
-   * ✅ Reenviar toda la campaña MANUALMENTE.
-   * - Resetea items (excepto skipped)
-   * - Resetea contadores
-   * - Desvincula mensajes viejos (campaignItemId = null) para que webhooks tardíos no contaminen
-   */
   async resendAllCampaign(id: string) {
     const camp = await this.prisma.whatsappCampaign.findUnique({ where: { id } })
     if (!camp) return { ok: false, error: 'not_found' }
@@ -203,6 +292,7 @@ export class WhapiCampaignService {
         status: WhatsappCampaignStatus.running,
         startedAt: now,
         finishedAt: null,
+        scheduledAt: null,
         doneCount: 0,
         sentCount: 0,
         deliveredCount: 0,
@@ -212,6 +302,9 @@ export class WhapiCampaignService {
         maxRetries: 0,
       },
     })
+
+    // reset cache
+    this.mediaCache.delete(id)
 
     void this.kick()
     return { ok: true }
@@ -260,9 +353,26 @@ export class WhapiCampaignService {
         createdAt: true,
         startedAt: true,
         finishedAt: true,
+        scheduledAt: true,
+        mediaType: true,
+        attachmentId: true,
       },
     })
     return { ok: true, data: rows }
+  }
+
+  private async getMediaForCampaign(campId: string, attachmentId: number): Promise<MediaCache> {
+    const cached = this.mediaCache.get(campId)
+    const now = Date.now()
+    if (cached && cached.expMs > now + 60_000) return cached
+
+    const signed = await this.attachments.getPublicSignedUrl(attachmentId, 3600)
+    const expMs = signed.exp * 1000
+    const filename = signed.row.originalName || 'archivo'
+
+    const next: MediaCache = { url: signed.url, expMs, filename }
+    this.mediaCache.set(campId, next)
+    return next
   }
 
   private async kick() {
@@ -437,9 +547,27 @@ export class WhapiCampaignService {
         }
 
         try {
-          const r = await this.whapi.sendText(next.to, camp.body)
-          
-          // ✅ ACÁ ESTÁ EL ARREGLO: Buscamos el ID adentro de "message" primero
+          const mediaType = camp.mediaType ?? WhatsappCampaignMediaType.text
+
+          let r: any
+          if (mediaType === WhatsappCampaignMediaType.text) {
+            r = await this.whapi.sendText(next.to, camp.body)
+          } else {
+            const attachmentId = camp.attachmentId ?? null
+            if (!attachmentId) throw new Error('attachment_required')
+
+            const media = await this.getMediaForCampaign(camp.id, attachmentId)
+            const caption = String(camp.body || '')
+
+            if (mediaType === WhatsappCampaignMediaType.image) {
+              r = await this.whapi.sendImage({ toRaw: next.to, mediaUrl: media.url, caption })
+            } else if (mediaType === WhatsappCampaignMediaType.video) {
+              r = await this.whapi.sendVideo({ toRaw: next.to, mediaUrl: media.url, caption })
+            } else {
+              r = await this.whapi.sendDocument({ toRaw: next.to, mediaUrl: media.url, caption, filename: media.filename })
+            }
+          }
+
           const rawId = (r as any)?.message?.id || (r as any)?.id
           const whapiMessageId = typeof rawId === 'string' ? rawId : ''
 

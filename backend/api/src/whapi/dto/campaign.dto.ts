@@ -1,4 +1,4 @@
-import { IsBoolean, IsInt, IsNotEmpty, IsOptional, IsString, Min } from 'class-validator'
+import { IsBoolean, IsIn, IsInt, IsISO8601, IsOptional, IsString, Min } from 'class-validator'
 import { Type } from 'class-transformer'
 
 export class CreateCampaignDto {
@@ -6,9 +6,10 @@ export class CreateCampaignDto {
   @IsOptional()
   name?: string
 
+  // ✅ ahora body es opcional (para imagen/video sin texto)
   @IsString()
-  @IsNotEmpty()
-  body!: string
+  @IsOptional()
+  body?: string
 
   @IsOptional()
   @Type(() => Number)
@@ -28,4 +29,20 @@ export class CreateCampaignDto {
   @Min(250)
   @IsOptional()
   delayMs?: number
+
+  // ✅ tipo de campaña
+  @IsOptional()
+  @IsIn(['text', 'image', 'video', 'document'])
+  mediaType?: 'text' | 'image' | 'video' | 'document'
+
+  // ✅ adjunto desde attachments (solo para image/video/document)
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  attachmentId?: number
+
+  // ✅ programación
+  @IsOptional()
+  @IsISO8601()
+  scheduledAt?: string
 }
