@@ -1,8 +1,9 @@
-// src/whapi/whapi.controller.ts
-import { Body, Controller, Get, Param, Post, Query, UseGuards } from '@nestjs/common'
+import { Body, Controller, Get, HttpCode, Param, Post, Query, Req, UseGuards } from '@nestjs/common'
+import type { Request } from 'express'
 import { WhatsappCampaignItemStatus, WhatsappMessageStatus } from '@prisma/client'
 import { PrismaService } from '@/prisma/prisma.service'
 import { JwtGuard } from '@/auth/jwt.guard'
+import { Public } from '@/auth/public.decorator'
 import { WhapiService } from './whapi.service'
 import { SendTextDto } from './dto/send-text.dto'
 import { CreateCampaignDto } from './dto/campaign.dto'
@@ -22,11 +23,16 @@ function normPhone(raw: string) {
   return String(raw ?? '').replace(/[^\d]/g, '')
 }
 
+/** ✅ Status map más tolerante (Whapi puede mandar variantes) */
 function mapMsgStatus(status: string): WhatsappMessageStatus | null {
   const s = String(status || '').toLowerCase()
-  if (s === 'sent') return WhatsappMessageStatus.sent
-  if (s === 'delivered') return WhatsappMessageStatus.delivered
-  if (s === 'read') return WhatsappMessageStatus.read
+
+  if (s.includes('read')) return WhatsappMessageStatus.read
+  if (s.includes('deliver')) return WhatsappMessageStatus.delivered
+  if (s.includes('sent')) return WhatsappMessageStatus.sent
+  if (s.includes('fail') || s.includes('error') || s.includes('reject')) return WhatsappMessageStatus.failed
+
+  // compat exact
   if (s === 'failed') return WhatsappMessageStatus.failed
   return null
 }
@@ -60,48 +66,82 @@ function deriveEventString(p: AnyRecord): string {
     if (type) return type
     if (e) return e
   }
-  return ''
+  return safeString(p['type']) || safeString(p['update_type']) || ''
 }
 
+/**
+ * ✅ Extractor robusto:
+ * - soporta: statuses[], data.statuses[], message, data.message, messages[], etc.
+ */
 function extractStatuses(payload: unknown): Array<{ id: string; status: string; error?: string }> {
   if (!isRecord(payload)) return []
-
   const p = payload as AnyRecord
   const out: Array<{ id: string; status: string; error?: string }> = []
 
+  const pickId = (row: AnyRecord) =>
+    safeString(row['id']) ||
+    safeString(row['message_id']) ||
+    safeString(row['messageId']) ||
+    safeString(row['msg_id'])
+
+  const pickStatus = (row: AnyRecord) => safeString(row['status']) || safeString(row['ack']) || safeString(row['state'])
+
   const pushRow = (row: unknown) => {
     if (!isRecord(row)) return
-    const id = safeString(row['id']) || safeString(row['message_id'])
-    const st = safeString(row['status'])
-    const er = safeString(row['error'])
+    const r = row as AnyRecord
+
+    // casos anidados: row.message.{id,status}
+    const msg = isRecord(r['message']) ? (r['message'] as AnyRecord) : null
+
+    const id = (msg ? pickId(msg) : '') || pickId(r)
+    const st = (msg ? pickStatus(msg) : '') || pickStatus(r)
+    const er = safeString(r['error']) || (msg ? safeString(msg['error']) : '')
+
     if (!id || !st) return
     out.push(er ? { id, status: st, error: er } : { id, status: st })
   }
 
-  const ev = safeString(p['event'])
-  if (ev === 'statuses.post' && isRecord(p['data'])) {
-    pushRow(p['data'])
-  }
-
+  // 1) payload.statuses[]
   if (Array.isArray(p['statuses'])) {
     for (const s of p['statuses'] as unknown[]) pushRow(s)
     if (out.length) return out
   }
 
-  const data = p['data']
-  if (isRecord(data) && Array.isArray((data as AnyRecord)['statuses'])) {
-    for (const s of (data as AnyRecord)['statuses'] as unknown[]) pushRow(s)
+  // 2) payload.messages[]
+  if (Array.isArray(p['messages'])) {
+    for (const s of p['messages'] as unknown[]) pushRow(s)
     if (out.length) return out
   }
 
+  // 3) payload.data
+  const data = p['data']
   if (Array.isArray(data)) {
     for (const s of data) pushRow(s)
     if (out.length) return out
   }
 
   if (isRecord(data)) {
-    pushRow(data)
+    const d = data as AnyRecord
+
+    if (Array.isArray(d['statuses'])) {
+      for (const s of d['statuses'] as unknown[]) pushRow(s)
+      if (out.length) return out
+    }
+
+    if (Array.isArray(d['messages'])) {
+      for (const s of d['messages'] as unknown[]) pushRow(s)
+      if (out.length) return out
+    }
+
+    // data.message (o data que contiene message)
+    if (isRecord(d['message'])) pushRow(d)
+    pushRow(d)
+
+    if (out.length) return out
   }
+
+  // 4) payload.message directo
+  if (isRecord(p['message'])) pushRow(p)
 
   return out
 }
@@ -177,7 +217,10 @@ export class WhapiController {
 
     try {
       const r = await this.whapi.sendText(to, body)
-      const whapiMessageId = safeString((r as any)?.id)
+
+      // ✅ ID puede venir en r.message.id o r.id (más robusto)
+      const rawId = (r as any)?.message?.id || (r as any)?.id
+      const whapiMessageId = typeof rawId === 'string' ? rawId : ''
 
       await this.prisma.whatsappMessage.update({
         where: { id: msg.id },
@@ -266,47 +309,86 @@ export class WhapiController {
   }
 
   /**
-   * ✅ Webhook SIN JWT (Whapi pega desde afuera)
+   * ✅ DEBUG: ver últimos logs de webhook (para copiar el payload real)
    */
-  @Post('webhook')
-  async webhook(@Query('secret') secret: string | undefined, @Body() payload: unknown) {
-    const expected = process.env.WHAPI_WEBHOOK_SECRET || ''
-    if (expected && secret !== expected) return { ok: false, error: 'unauthorized' }
+  @UseGuards(JwtGuard)
+  @Get('webhook-logs')
+  async webhookLogs(@Query('take') take?: string) {
+    const n = Math.max(1, Math.min(200, Number(take || 50)))
+    const rows = await this.prisma.whatsappWebhookLog.findMany({
+      take: n,
+      orderBy: { createdAt: 'desc' },
+      select: { id: true, createdAt: true, event: true, messageId: true, status: true, payload: true },
+    })
+    return { ok: true, data: rows }
+  }
 
-    const p = isRecord(payload) ? (payload as AnyRecord) : {}
-    const eventStr = deriveEventString(p)
+  /**
+   * ✅ Webhook PÚBLICO (Whapi pega desde afuera)
+   * - Acepta secret por query (?secret=) o header (x-whapi-secret)
+   * - Loguea SIEMPRE payload en DB
+   * - Actualiza mensaje + campaignItem
+   * - Recalcula métricas del campaign al final (robusto)
+   */
+  @Public()
+  @Post('webhook')
+  @HttpCode(200)
+  async webhook(
+    @Req() req: Request,
+    @Query('secret') secret: string | undefined,
+    @Body() payload: unknown,
+  ) {
+    const expected = (process.env.WHAPI_WEBHOOK_SECRET || '').trim()
+
+    // secret por header o query
+    const headerSecret = String(req.headers['x-whapi-secret'] ?? '').trim()
+    const querySecret = String(secret ?? '').trim()
+
+    if (expected && headerSecret !== expected && querySecret !== expected) {
+      // respondemos 200 igual, pero marcamos unauthorized
+      return { ok: false, error: 'unauthorized' }
+    }
+
+    const eventStr = isRecord(payload) ? deriveEventString(payload as AnyRecord) : ''
     const rows = extractStatuses(payload)
 
-    await this.prisma.whatsappWebhookLog.create({
-      data: {
-        event: eventStr || safeString(p['event']) || null,
-        messageId: rows[0]?.id ?? null,
-        status: rows[0]?.status ?? null,
-        payload: p as any,
-      },
-    })
+    // ✅ Log crudo SIEMPRE (así podés ver el payload real)
+    await this.prisma.whatsappWebhookLog
+      .create({
+        data: {
+          event: eventStr || null,
+          messageId: rows[0]?.id ?? null,
+          status: rows[0]?.status ?? null,
+          payload: payload as any, // puede ser obj/array
+        },
+      })
+      .catch(() => undefined)
 
     if (!rows.length) return { ok: true }
 
     const now = new Date()
+    const touchedCampaignIds = new Set<string>()
 
     for (const stRow of rows) {
-      const messageId = stRow.id
+      const whapiMsgId = stRow.id
       const mappedMsgStatus = mapMsgStatus(stRow.status)
       if (!mappedMsgStatus) continue
 
+      // 1) actualiza WhatsappMessage por whapiMessageId
       await this.prisma.whatsappMessage.updateMany({
-        where: { whapiMessageId: messageId },
+        where: { whapiMessageId: whapiMsgId },
         data: {
           status: mappedMsgStatus,
           deliveredAt: mappedMsgStatus === WhatsappMessageStatus.delivered ? now : undefined,
           readAt: mappedMsgStatus === WhatsappMessageStatus.read ? now : undefined,
-          error: mappedMsgStatus === WhatsappMessageStatus.failed ? (stRow.error || 'failed') : undefined,
+          // ✅ limpiar error cuando no es failed
+          error: mappedMsgStatus === WhatsappMessageStatus.failed ? (stRow.error || 'failed') : null,
         },
       })
 
+      // 2) obtener campaignItemId si existe
       const msg = await this.prisma.whatsappMessage.findFirst({
-        where: { whapiMessageId: messageId },
+        where: { whapiMessageId: whapiMsgId },
         select: { campaignItemId: true },
       })
       if (!msg?.campaignItemId) continue
@@ -315,48 +397,70 @@ export class WhapiController {
       const mappedItem = msgToItemStatus(mappedMsgStatus)
       if (!mappedItem) continue
 
-      await this.prisma.$transaction(async (tx) => {
+      // 3) update monotónico de item (no volver para atrás)
+      const updated = await this.prisma.$transaction(async (tx) => {
         const item = await tx.whatsappCampaignItem.findUnique({
           where: { id: itemId },
           select: { id: true, campaignId: true, status: true },
         })
-        if (!item) return
+        if (!item) return { campaignId: null as string | null }
 
         const prev = item.status
-        if (prev === WhatsappCampaignItemStatus.failed || prev === WhatsappCampaignItemStatus.skipped) return
+        if (prev === WhatsappCampaignItemStatus.failed || prev === WhatsappCampaignItemStatus.skipped) {
+          return { campaignId: item.campaignId }
+        }
 
         const prevRank = statusRankItem(prev)
         const nextRank = statusRankItem(mappedItem)
-        if (nextRank <= prevRank) return
+        if (nextRank <= prevRank) return { campaignId: item.campaignId }
 
         await tx.whatsappCampaignItem.update({
           where: { id: item.id },
-          data: { status: mappedItem },
+          data: {
+            status: mappedItem,
+            updatedAt: now,
+            lastError: mappedItem === WhatsappCampaignItemStatus.failed ? (stRow.error || 'failed') : null,
+          },
         })
 
-        if (mappedItem === WhatsappCampaignItemStatus.delivered) {
-          if (prevRank < statusRankItem(WhatsappCampaignItemStatus.delivered)) {
-            await tx.whatsappCampaign.update({
-              where: { id: item.campaignId },
-              data: { deliveredCount: { increment: 1 } },
-            })
-          }
-        }
+        return { campaignId: item.campaignId }
+      })
 
-        if (mappedItem === WhatsappCampaignItemStatus.read) {
-          if (prevRank < statusRankItem(WhatsappCampaignItemStatus.delivered)) {
-            await tx.whatsappCampaign.update({
-              where: { id: item.campaignId },
-              data: { deliveredCount: { increment: 1 } },
-            })
-          }
-          if (prevRank < statusRankItem(WhatsappCampaignItemStatus.read)) {
-            await tx.whatsappCampaign.update({
-              where: { id: item.campaignId },
-              data: { readCount: { increment: 1 } },
-            })
-          }
-        }
+      if (updated.campaignId) touchedCampaignIds.add(updated.campaignId)
+    }
+
+    // 4) ✅ Recalcular métricas por campaña tocada (robusto y consistente)
+    for (const campaignId of touchedCampaignIds) {
+      const agg = await this.prisma.whatsappCampaignItem.groupBy({
+        by: ['status'],
+        where: { campaignId },
+        _count: { _all: true },
+      })
+
+      const count = (s: WhatsappCampaignItemStatus) => agg.find((a) => a.status === s)?._count._all ?? 0
+
+      const total = await this.prisma.whatsappCampaignItem.count({ where: { campaignId } })
+      const pending = count(WhatsappCampaignItemStatus.pending) + count(WhatsappCampaignItemStatus.sending)
+      const doneCount = Math.max(0, total - pending)
+
+      const sent = count(WhatsappCampaignItemStatus.sent)
+      const delivered = count(WhatsappCampaignItemStatus.delivered)
+      const read = count(WhatsappCampaignItemStatus.read)
+      const failed = count(WhatsappCampaignItemStatus.failed)
+      const skipped = count(WhatsappCampaignItemStatus.skipped)
+
+      await this.prisma.whatsappCampaign.update({
+        where: { id: campaignId },
+        data: {
+          total,
+          doneCount,
+          // sentCount = sent + delivered + read (porque delivered/read implican sent)
+          sentCount: sent + delivered + read,
+          deliveredCount: delivered + read,
+          readCount: read,
+          failedCount: failed,
+          skippedCount: skipped,
+        },
       })
     }
 
