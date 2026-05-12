@@ -4,9 +4,13 @@ import { ProtectedRoute } from '../auth/ProtectedRoute'
 
 import { AppShell } from '../components/layout/AppShell'
 import { LoginScreen } from '../components/screens/LoginScreen'
-import { DashboardScreen } from '../components/screens/DashboardScreen'
+import HomeVentasScreen from '../components/screens/HomeVentasScreen'
+import { ContractsScreen } from '../components/screens/ContractsScreen'
 import { RecipientsScreen } from '../components/screens/RecipientsScreen'
 import { WhatsappScreen } from '../components/screens/WhatsappScreen'
+import { SellersScreen } from '../components/screens/SellersScreen'
+import { PlansScreen } from '../components/screens/PlansScreen'
+import { MetricsScreen } from '../components/screens/MetricsScreen'
 
 export const router = createBrowserRouter([
   {
@@ -21,10 +25,42 @@ export const router = createBrowserRouter([
       </ProtectedRoute>
     ),
     children: [
-      { index: true, element: <DashboardScreen /> },
-      { path: 'recipients', element: <RecipientsScreen /> },
-      { path: 'whatsapp', element: <WhatsappScreen /> },
+      {
+        index: true,
+        element: <HomeVentasScreen />,
+      },
+      {
+        path: 'contratos',
+        element: <ContractsScreen />,
+      },
+      {
+  path: 'planes',
+  element: <PlansScreen />,
+},
+      {
+  path: 'vendedores',
+  element: <SellersScreen />,
+},
+{
+  path: 'metricas',
+  element: <MetricsScreen />,
+},
+      {
+        path: 'email',
+        element: <RecipientsScreen />,
+      },
+      {
+        path: 'recipients',
+        element: <Navigate to="/email" replace />,
+      },
+      {
+        path: 'whatsapp',
+        element: <WhatsappScreen />,
+      },
     ],
   },
-  { path: '*', element: <Navigate to="/" replace /> },
+  {
+    path: '*',
+    element: <Navigate to="/" replace />,
+  },
 ])
